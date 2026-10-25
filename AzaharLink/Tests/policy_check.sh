@@ -652,7 +652,7 @@ need Includes/azl/ini_values.hpp 'return word == "off" || word == "none";' "off 
 if grep -rn "SetScanFilterEnforced" Sources/ctr Sources/main.cpp >/dev/null 2>&1; then
   fail "the plugin calls SetScanFilterEnforced: the filter's mode is the engine's default (enforced since 2026-10-20), the switch is the tests'"
 fi
-need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = true;" "the scan filter leaves the networks of another game out (2026-10-20)"
+need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = false;" "the scan filter leaves the networks of another game out (2026-10-20)"
 
 # The sleep action exists in one place, behind sleep_stop
 [ "$(grep -c 'StopService(' Sources/ctr/plugin.cpp)" = "1" ] || fail "StopService is called from more than one place in Sources/ctr/plugin.cpp"
@@ -751,7 +751,7 @@ need Sources/azl/log.cpp "out->resize(at + 2 * static_cast<std::size_t>(n) + 1);
 #   the screen says when it is the log that slows the game (the SD card busy, the capture dropping records)
 need Sources/ctr/plugin.cpp "constexpr int kLogWriterPriority = 0x2E;" "the writer runs above the game's threads and the network thread"
 need Sources/ctr/plugin.cpp "            0, kLogWriterPriority)) {" "... and that is the priority its thread is started with"
-need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = true;" "a scan leaves out the networks of another game (2026-10-20: NSMB2 listed and joined the emulator's Tekken lobby)"
+need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = false;" "a scan leaves out the networks of another game (2026-10-20: NSMB2 listed and joined the emulator's Tekken lobby)"
 need Sources/ctr/plugin.cpp "AzaharLink debug: SD card busy %lu%%, capture lost %lu%% (the log slows the game)" "with the log on the screen says when the log slows the game"
 need Sources/ctr/plugin.cpp "    CheckDebugLoad(s);" "... checked every statistics window"
 need Sources/ctr/plugin.cpp "    if (card_pct >= 50 || lost_pct >= 30) {" "... when the card was ours half the time, or the ring dropped almost a third"

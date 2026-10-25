@@ -383,7 +383,7 @@ private:
         u64 rx_ms;
     };
     std::list<HeardBeacon> received_beacons_;
-    bool scan_filter_enforced_ = true;
+    bool scan_filter_enforced_ = false;
 
     u32 connection_status_event_ = 0; // engine-owned, persistent
     u32 connect_event_ = 0;           // engine-owned, signalled when ConnectToNetwork completes

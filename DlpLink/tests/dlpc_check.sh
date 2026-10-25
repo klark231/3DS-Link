@@ -46,14 +46,17 @@ ARGS=(--work "$W/run" --app "$OUT/3dslink.cia" --plugin "$STAGE/AzaharLink.3gx" 
 rc=0
 "$B/dlpc_test" "${ARGS[@]}" || rc=1
 if [ "${DLPC_BENCH:-0}" != 1 ]; then
-  # the composed files are on disk now: the independent verifier once more, from the shell, the way build_all.sh runs it on the real child
+  # the composed files are on disk now: the independent verifier once more, from the shell, the way build_all.sh runs it on the real child.
+  # (verify_cia.py checks the header, the title id, the version, the strings, the signatures, and --romfs-dir validates the whole
+  # RomFS against the same source directory the reference child was built from. dlpc_test, above, has already run the model
+  # comparison: the composed child stripped of its RomFS is byte-identical to the shipped reference model. Together those two
+  # cover everything a byte-for-byte `cmp` of the whole CIA would cover, minus the fields makerom draws at random on every run
+  # -- which is why `cmp` was removed: it could never pass.)
   echo "-- verify_cia.py on the composed files, as make_dlp_child.sh runs it"
   python3 "$TOOLS/verify_cia.py" "$W/run/composed.cia" --kind child --tid "00040001$TID_LO" --version "$VER16" --romfs-dir "$STAGE" --elf "$ELF_CHILD" \
     --expect-strings "$CHILD_NAME" "$CHILD_DESC" "$CHILD_AUTHOR" | tail -1 || rc=1
   python3 "$TOOLS/verify_cia.py" "$W/run/composed.emu.cia" --kind child --emu --tid "00040001$TID_LO" --version "$VER16" --romfs-dir "$STAGE" \
     --expect-strings "$CHILD_NAME" "$CHILD_DESC" "$CHILD_AUTHOR" | tail -1 || rc=1
-  cmp "$W/run/composed.cia" "$OUT/3dslink-child.cia" && echo "composed.cia == 3dslink-child.cia (byte for byte)" || rc=1
-  cmp "$W/run/composed.emu.cia" "$OUT/3dslink-child.emu.cia" && echo "composed.emu.cia == 3dslink-child.emu.cia (byte for byte)" || rc=1
   # the host library's own test of a whole Download Play (a simulated stock console downloads the child, with losses, silences, re-made rooms): with the composed child
   # (it runs in its own folder: its fuzz files must not go to a slow mount)
   echo "-- DlpLink/host/tests/dlph_test.c with the composed child"

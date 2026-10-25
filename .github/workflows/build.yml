@@ -1,0 +1,29 @@
+name: build
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash AzaharLink/Tests/policy_check.sh
+      - run: bash tools_ctr/build_tools.sh
+      - run: bash DlpLink/tools/build_all.sh --dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 3DSLink
+          path: |
+            AzaharLink/AzaharLink.3gx
+            AzaharLink/ConfigApp/3DSLink.3dsx
+            DlpLink/out/3dslink.cia
+      - uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: build-${{ github.run_number }}
+          files: |
+            AzaharLink/AzaharLink.3gx
+            AzaharLink/ConfigApp/3DSLink.3dsx
+            DlpLink/out/3dslink.cia
