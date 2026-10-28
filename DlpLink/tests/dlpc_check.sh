@@ -19,53 +19,63 @@ for f in "$OUT/3dslink.cia" "$OUT/3dslink-child.cia" "$OUT/3dslink-child.emu.cia
 done
 rm -rf "$B"; mkdir -p "$B" "$W"
 
-# --- Create the smart CIA comparison script ---
+# --- Smart CIA comparison: skip the header (random makerom bytes), compare only the content section. ---
 cat > "$W/compare_cia.py" <<'PYEOF'
 import sys
 import struct
 
-def zero_random_blocks(data):
-    d = bytearray(data)
-    if len(d) < 0x2020: return d
+def get_content_offset(data):
+    """Offset of the content section in a CIA, or None if the file is too small / malformed."""
+    if len(data) < 0x2020:
+        return None
+    cert_size   = struct.unpack('>I', data[0x07:0x0B])[0]
+    ticket_size = struct.unpack('>I', data[0x0B:0x0F])[0]
+    tmd_size    = struct.unpack('>I', data[0x0F:0x13])[0]
+    meta_size   = struct.unpack('>I', data[0x13:0x17])[0]
+    return 0x2020 + cert_size + ticket_size + tmd_size + meta_size
+
+def compare_cia(file1, file2):
     try:
-        cert_size = struct.unpack('>I', d[0x07:0x0B])[0]
-        ticket_size = struct.unpack('>I', d[0x0B:0x0F])[0]
-        tmd_size = struct.unpack('>I', d[0x0F:0x13])[0]
-        meta_size = struct.unpack('>I', d[0x13:0x17])[0]
-        
-        cert_off = 0x2020
-        ticket_off = cert_off + cert_size
-        tmd_off = ticket_off + ticket_size
-        meta_off = tmd_off + tmd_size
-        content_off = meta_off + meta_size
+        with open(file1, 'rb') as f1, open(file2, 'rb') as f2:
+            data1 = f1.read()
+            data2 = f2.read()
+    except Exception as e:
+        print(f"cannot read: {e}")
+        return False
 
-        for i in range(ticket_off + 0x04, min(ticket_off + 0x104, len(d))): d[i] = 0
-        for i in range(ticket_off + 0x1D3, min(ticket_off + 0x1D9, len(d))): d[i] = 0
-        for i in range(ticket_off + 0x1D9, min(ticket_off + 0x1E9, len(d))): d[i] = 0
-        for i in range(tmd_off, min(tmd_off + 0x100, len(d))): d[i] = 0
-        for i in range(content_off, min(content_off + 0x100, len(d))): d[i] = 0
-        for i in range(max(0, len(d) - 32), len(d)): d[i] = 0
-    except Exception: pass
-    return d
+    if len(data1) != len(data2):
+        print(f"sizes differ: {len(data1)} vs {len(data2)}")
+        return False
 
-if len(sys.argv) != 3: sys.exit(1)
-try:
-    with open(sys.argv[1], 'rb') as f1, open(sys.argv[2], 'rb') as f2:
-        data1 = f1.read()
-        data2 = f2.read()
-except Exception: sys.exit(1)
+    c1 = get_content_offset(data1)
+    c2 = get_content_offset(data2)
+    if c1 is None or c2 is None:
+        print("cannot parse CIA header")
+        return False
+    if c1 != c2:
+        print(f"content offsets differ: 0x{c1:X} vs 0x{c2:X}")
+        return False
+    if c1 >= len(data1):
+        print(f"content offset 0x{c1:X} past end of file 0x{len(data1):X}")
+        return False
 
-if len(data1) != len(data2):
-    print(f"sizes differ ({len(data1)} vs {len(data2)})")
-    sys.exit(1)
+    if data1[c1:] == data2[c1:]:
+        print(f"content section matches ({len(data1)-c1} bytes at offset 0x{c1:X})")
+        return True
 
-if zero_random_blocks(data1) == zero_random_blocks(data2):
-    sys.exit(0)
-else:
-    print("files differ outside of random makerom fields")
-    sys.exit(1)
+    for i in range(c1, len(data1)):
+        if data1[i] != data2[i]:
+            print(f"content differs at offset {i} (0x{i:X}, {i-c1} bytes into the content)")
+            return False
+    return False
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print(f"usage: {sys.argv[0]} file1.cia file2.cia")
+        sys.exit(1)
+    sys.exit(0 if compare_cia(sys.argv[1], sys.argv[2]) else 1)
 PYEOF
-# -----------------------------------------------
+# ---------------------------------------------------------------------------------------------
 
 if [ "$MODE" = sanitize ]; then CF="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"; SANL="-fsanitize=address,undefined"; else CF="-O2 -g"; SANL=""; fi
 export ASAN_OPTIONS=detect_leaks=0
@@ -101,10 +111,14 @@ if [ "${DLPC_BENCH:-0}" != 1 ]; then
     --expect-strings "$CHILD_NAME" "$CHILD_DESC" "$CHILD_AUTHOR" | tail -1 || rc=1
   python3 "$TOOLS/verify_cia.py" "$W/run/composed.emu.cia" --kind child --emu --tid "00040001$TID_LO" --version "$VER16" --romfs-dir "$STAGE" \
     --expect-strings "$CHILD_NAME" "$CHILD_DESC" "$CHILD_AUTHOR" | tail -1 || rc=1
-  
-  # Replaced `cmp` with the python helper to ignore makerom random bytes
-  python3 "$W/compare_cia.py" "$W/run/composed.cia" "$OUT/3dslink-child.cia" && echo "composed.cia matches 3dslink-child.cia (ignoring random makerom bytes)" || rc=1
-  python3 "$W/compare_cia.py" "$W/run/composed.emu.cia" "$OUT/3dslink-child.emu.cia" && echo "composed.emu.cia matches 3dslink-child.emu.cia (ignoring random makerom bytes)" || rc=1
+
+  # The header (certs, ticket, TMD, meta) contains bytes makerom draws at random on every build (signatures, ticket ID,
+  # title key), so a byte-for-byte comparison of the whole file always fails. The CONTENT section (ExeFS + RomFS) is
+  # deterministic. The header fields that matter (title ID, version, strings, signatures valid) are checked above by
+  # verify_cia.py, and the model comparison in this same script also validates the header structure. So: compare only
+  # the content section byte-for-byte.
+  python3 "$W/compare_cia.py" "$W/run/composed.cia" "$OUT/3dslink-child.cia" && echo "composed.cia content matches 3dslink-child.cia" || rc=1
+  python3 "$W/compare_cia.py" "$W/run/composed.emu.cia" "$OUT/3dslink-child.emu.cia" && echo "composed.emu.cia content matches 3dslink-child.emu.cia" || rc=1
 
   # the host library's own test of a whole Download Play (a simulated stock console downloads the child, with losses, silences, re-made rooms): with the composed child
   # (it runs in its own folder: its fuzz files must not go to a slow mount)
