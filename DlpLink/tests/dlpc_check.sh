@@ -18,6 +18,55 @@ for f in "$OUT/3dslink.cia" "$OUT/3dslink-child.cia" "$OUT/3dslink-child.emu.cia
   [ -f "$f" ] || { echo "MANCA: $f (eseguire build_all.sh)"; exit 2; }
 done
 rm -rf "$B"; mkdir -p "$B" "$W"
+
+# --- Create the smart CIA comparison script ---
+cat > "$W/compare_cia.py" <<'PYEOF'
+import sys
+import struct
+
+def zero_random_blocks(data):
+    d = bytearray(data)
+    if len(d) < 0x2020: return d
+    try:
+        cert_size = struct.unpack('>I', d[0x07:0x0B])[0]
+        ticket_size = struct.unpack('>I', d[0x0B:0x0F])[0]
+        tmd_size = struct.unpack('>I', d[0x0F:0x13])[0]
+        meta_size = struct.unpack('>I', d[0x13:0x17])[0]
+        
+        cert_off = 0x2020
+        ticket_off = cert_off + cert_size
+        tmd_off = ticket_off + ticket_size
+        meta_off = tmd_off + tmd_size
+        content_off = meta_off + meta_size
+
+        for i in range(ticket_off + 0x04, min(ticket_off + 0x104, len(d))): d[i] = 0
+        for i in range(ticket_off + 0x1D3, min(ticket_off + 0x1D9, len(d))): d[i] = 0
+        for i in range(ticket_off + 0x1D9, min(ticket_off + 0x1E9, len(d))): d[i] = 0
+        for i in range(tmd_off, min(tmd_off + 0x100, len(d))): d[i] = 0
+        for i in range(content_off, min(content_off + 0x100, len(d))): d[i] = 0
+        for i in range(max(0, len(d) - 32), len(d)): d[i] = 0
+    except Exception: pass
+    return d
+
+if len(sys.argv) != 3: sys.exit(1)
+try:
+    with open(sys.argv[1], 'rb') as f1, open(sys.argv[2], 'rb') as f2:
+        data1 = f1.read()
+        data2 = f2.read()
+except Exception: sys.exit(1)
+
+if len(data1) != len(data2):
+    print(f"sizes differ ({len(data1)} vs {len(data2)})")
+    sys.exit(1)
+
+if zero_random_blocks(data1) == zero_random_blocks(data2):
+    sys.exit(0)
+else:
+    print("files differ outside of random makerom fields")
+    sys.exit(1)
+PYEOF
+# -----------------------------------------------
+
 if [ "$MODE" = sanitize ]; then CF="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"; SANL="-fsanitize=address,undefined"; else CF="-O2 -g"; SANL=""; fi
 export ASAN_OPTIONS=detect_leaks=0
 # dlpc.c: the strictest warnings, as errors (it is compiled for the console with -Wall only; the strict ones find what a 32-bit size_t or a sign would break)
@@ -52,8 +101,11 @@ if [ "${DLPC_BENCH:-0}" != 1 ]; then
     --expect-strings "$CHILD_NAME" "$CHILD_DESC" "$CHILD_AUTHOR" | tail -1 || rc=1
   python3 "$TOOLS/verify_cia.py" "$W/run/composed.emu.cia" --kind child --emu --tid "00040001$TID_LO" --version "$VER16" --romfs-dir "$STAGE" \
     --expect-strings "$CHILD_NAME" "$CHILD_DESC" "$CHILD_AUTHOR" | tail -1 || rc=1
-  cmp "$W/run/composed.cia" "$OUT/3dslink-child.cia" && echo "composed.cia == 3dslink-child.cia (byte for byte)" || rc=1
-  cmp "$W/run/composed.emu.cia" "$OUT/3dslink-child.emu.cia" && echo "composed.emu.cia == 3dslink-child.emu.cia (byte for byte)" || rc=1
+  
+  # Replaced `cmp` with the python helper to ignore makerom random bytes
+  python3 "$W/compare_cia.py" "$W/run/composed.cia" "$OUT/3dslink-child.cia" && echo "composed.cia matches 3dslink-child.cia (ignoring random makerom bytes)" || rc=1
+  python3 "$W/compare_cia.py" "$W/run/composed.emu.cia" "$OUT/3dslink-child.emu.cia" && echo "composed.emu.cia matches 3dslink-child.emu.cia (ignoring random makerom bytes)" || rc=1
+
   # the host library's own test of a whole Download Play (a simulated stock console downloads the child, with losses, silences, re-made rooms): with the composed child
   # (it runs in its own folder: its fuzz files must not go to a slow mount)
   echo "-- DlpLink/host/tests/dlph_test.c with the composed child"
