@@ -21,7 +21,7 @@ step() {   # step <label> <regex of the lines to show> <command...>
     { echo "== $label (exit $rc)"; cat "$tmp"; } >>"$LOG"
     if [ "$rc" -ne 0 ]; then
         echo "ERRORE: $label non e' riuscito (exit $rc). Fine del suo output (tutto in DlpLink/out/build_cias.log):"
-        tail -25 "$tmp"
+        { grep -nE "FAIL|ERROR|refuses|differ" "$tmp" | head -40; echo "--- last 25 ---"; tail -25 "$tmp"; }
         rm -f "$tmp"
         exit 1
     fi

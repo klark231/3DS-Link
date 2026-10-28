@@ -24,10 +24,10 @@ constexpr u32 kGoodbyeWaitMs = 120;
 constexpr u32 kMaxReliableBacklog = 65536;
 // ENet's defaults for what one packet / the unprocessed data of a peer may be are 32 MB each, and a
 // failed enet_malloc aborts (callbacks.c). The room sends UDS frames (~1.5 KB at most) and room
-// information (a few KB): 64 KB per packet is generous, and 192 KB of waiting data is 1.8 x what a
-// full soc ring (256 datagrams of ~416 B) can deliver in one go.
-constexpr std::size_t kMaxPacketSize = 64 * 1024;
-constexpr std::size_t kMaxWaitingData = 192 * 1024;
+// information (a few KB): 16 KB per packet is generous, and 64 KB of waiting data covers what a
+// full soc ring (256 datagrams of ~416 B) can deliver in one go. (Reduced for Old 3DS memory limits).
+constexpr std::size_t kMaxPacketSize = 16 * 1024;
+constexpr std::size_t kMaxWaitingData = 64 * 1024;
 
 u32 Ms(u64 v) {
     return v > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<u32>(v);
