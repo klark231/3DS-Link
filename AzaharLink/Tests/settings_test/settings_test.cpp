@@ -564,16 +564,16 @@ static void TestServerList() {
 
     // full list: Add refuses a new room, still moves a known one; Use gives up the last one
     setup::ServerList full;
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 50; ++i) {
         CHECK(full.Add(Srv("h" + std::to_string(i))) == setup::ServerList::AddResult::Added);
     }
-    CHECK(full.full() && full.size() == 10 && setup::ServerList::kMax == 10);
+    CHECK(full.full() && full.size() == 50 && setup::ServerList::kMax == 50);
     CHECK(Order(full).substr(0, 8) == "h9:24872"); // h0 is the oldest, last
-    CHECK(full.Add(Srv("new")) == setup::ServerList::AddResult::Full && full.size() == 10 && full.Find(Srv("new")) < 0);
-    CHECK(full.Add(Srv("h0")) == setup::ServerList::AddResult::Moved && full.Find(Srv("h0")) == 0 && full.size() == 10);
+    CHECK(full.Add(Srv("new")) == setup::ServerList::AddResult::Full && full.size() == 50 && full.Find(Srv("new")) < 0);
+    CHECK(full.Add(Srv("h0")) == setup::ServerList::AddResult::Moved && full.Find(Srv("h0")) == 0 && full.size() == 50);
     CHECK(!full.Use(Srv("h0"))); // already on top: nothing changed
-    CHECK(full.Use(Srv("h5")) && full.Find(Srv("h5")) == 0 && full.size() == 10);
-    CHECK(full.Use(Srv("new")) && full.Find(Srv("new")) == 0 && full.size() == 10);
+    CHECK(full.Use(Srv("h5")) && full.Find(Srv("h5")) == 0 && full.size() == 50);
+    CHECK(full.Use(Srv("new")) && full.Find(Srv("new")) == 0 && full.size() == 50);
     CHECK(full.Find(Srv("h1")) < 0 && full.Find(Srv("h2")) == 9); // h1 was the least recently used: it made room
     CHECK(full.Remove(0) && !full.full() && full.Add(Srv("again")) == setup::ServerList::AddResult::Added);
 
