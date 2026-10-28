@@ -121,7 +121,7 @@ ServerParse ParseServerLine(const std::string& line, Server& out);
 // holds '|': it is not one of the allowed characters.
 class ServerList {
 public:
-    static constexpr std::size_t kMax = 50;
+    static constexpr std::size_t kMax = 10;
 
     // The content of the file: lines that are not a room and rooms already seen are dropped, the first kMax are kept.
     static ServerList Parse(const std::string& text);

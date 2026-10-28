@@ -85,9 +85,7 @@ constexpr unsigned long kFrameworkReserved = 0xAB000;
 constexpr u32 kWarnIntervalMs = 60000;
 enum WarnKind { kWarnHeap = 0, kWarnSocket, kWarnTxDrops, kWarnOverflow, kWarnHle, kWarnDebugLoad, kWarnSilence };
 constexpr u32 kMemIntervalMs = 30000;
-// Lowered from 512 KB to 128 KB for Old 3DS: the framework reserves ~700 KB, so free heap is naturally low. 
-// Spamming warnings on the heap fragments memory further.
-constexpr long kMinFreeHeapBytes = 128 * 1024;
+constexpr long kMinFreeHeapBytes = 512 * 1024;
 
 constexpr const char* kDefaultNickname = "3DS Player";
 
@@ -111,8 +109,10 @@ std::string SanitizeNickname(const std::string& in) {
                         c == ' ' || c == '.' || c == '_' || c == '-';
         out += ok ? c : '_';
     }
+    while (!out.empty() && out.back() == ' ') {
         out.pop_back();
     }
+    while (!out.empty() && out.front() == ' ') {
         out.erase(out.begin());
     }
     if (out.size() > 20) {
@@ -125,6 +125,7 @@ std::string SanitizeNickname(const std::string& in) {
             meaningful = true;
         }
     }
+    if (!meaningful) {
         return "";
     }
     if (out.size() < 4) {
@@ -139,12 +140,14 @@ std::string SanitizeTitle(const std::string& in) {
     for (char c : in) {
         const unsigned char u = static_cast<unsigned char>(c);
         if (u == '\n' || u == '\r' || u == '\t') {
+            if (!out.empty() && out.back() != ' ') {
                 out += ' '; // a line break in a title is a space
             }
         } else if (u >= 0x20 && u != 0x7F) {
             out += c;
         }
     }
+    while (!out.empty() && out.back() == ' ') {
         out.pop_back();
     }
     if (out.size() > 80) {
@@ -177,6 +180,7 @@ std::string Utf16ToUtf8(const u16* text, std::size_t max_units) {
     for (std::size_t i = 0; i < max_units && text[i]; ++i) {
         const u16 c = text[i];
         if (c == '\n' || c == '\r') {
+            if (!out.empty() && out.back() != ' ') {
                 out += ' ';
             }
         } else if (c >= 0xD800 && c < 0xE000) {
@@ -185,6 +189,7 @@ std::string Utf16ToUtf8(const u16* text, std::size_t max_units) {
             AppendUtf8(out, c);
         }
     }
+    while (!out.empty() && out.back() == ' ') {
         out.pop_back();
     }
     return out;
@@ -194,6 +199,7 @@ std::string Utf16ToUtf8(const u16* text, std::size_t max_units) {
 /// less the first 0xAB000 that the framework uses for itself. 0 if the header is not there.
 unsigned long HeapCapacity() {
     const CTRPluginFramework::PluginHeader* header = CTRPluginFramework::FwkSettings::Header;
+    if (!header || header->heapSize <= kFrameworkReserved || header->heapSize > 0x1000000) {
         return 0;
     }
     return header->heapSize - kFrameworkReserved;
@@ -218,16 +224,16 @@ std::string TitleFromSmdh(Handle file, u8 console_language, const char* what) {
     std::string title;
     u64 size = 0;
     const Result size_rc = FSFILE_GetSize(file, &size);
-    
     // Read the WHOLE file (0x36C0 bytes for an SMDH, what Checkpoint does): on the console the read
     // of a shorter, odd-sized prefix (0x2008) failed with FS error 761 (0xE0C046F9) although the
     // open and GetSize worked.
-    // Use a static buffer instead of dynamic allocation to prevent heap fragmentation and crashes on Old 3DS.
-    static u8 buffer[0x36C0]; 
-    const u32 want = (R_SUCCEEDED(size_rc) && size >= kSmdhTitlesEnd && size <= sizeof(buffer))
+    const u32 want = (R_SUCCEEDED(size_rc) && size >= kSmdhTitlesEnd && size <= 0x10000)
                          ? static_cast<u32>(size)
-                         : sizeof(buffer);
-                         
+                         : 0x36C0;
+    u8* buffer = new (std::nothrow) u8[want];
+    if (!buffer) {
+        return title;
+    }
     std::memset(buffer, 0, want);
     u32 read = 0;
     const Result read_rc = FSFILE_Read(file, &read, 0, buffer, want);
@@ -256,6 +262,7 @@ std::string TitleFromSmdh(Handle file, u8 console_language, const char* what) {
             title = Utf16ToUtf8(units, 0x40);
         }
     }
+    delete[] buffer;
     return title;
 }
 
@@ -323,6 +330,7 @@ std::string ReadIconTitleArchive(u64 title_id, u8 language) {
         }
         const std::string title = TitleFromSmdh(handle, language, what);
         FSFILE_Close(handle);
+        if (!title.empty()) {
             return title;
         }
     }
@@ -447,10 +455,12 @@ void Plugin::StartLogWriter() {
     // On the game's own core (-1/1 may be unscheduled), above the game's threads (kLogWriterPriority): the SD card write
     // takes tens of milliseconds and must never happen in the game's frame or in the network loop, and what the writer holds
     // must never be waited for by a thread that can preempt it.
+    if (!log_thread_.Start(
             [this]() {
                 platform::MarkLogWriterThread(); // (the one thread that may wait for the log's locks: azl/platform.hpp)
                 bool backlog = false; // the last pass of the capture was cut short (LogFiles::DrainDebug) with records left
                 u32 rest_ms = 20;     // ... and how long the card is left alone before the next pass then
+                while (!log_stop_.load()) {
                     // Once a second is plenty for the statistics window (all there is to do with the log
                     // off); the debug capture fills a 512 KB ring that wants emptying four times as often,
                     // and a ring that still holds records after a bounded pass is not left for a whole pause.
@@ -468,6 +478,7 @@ void Plugin::StartLogWriter() {
                     const u32 slept_ms = static_cast<u32>(azl_ticks_to_ms(woke - asleep));
                     const u32 asked_ms = log_wake_ ? wait_ms : 250;
                     ++g_stats.writer_wakes;
+                    if (slept_ms > asked_ms && !log_stop_.load()) {
                         g_stats.writer_late_sum += slept_ms - asked_ms;
                         if (slept_ms - asked_ms > g_stats.writer_late_max) {
                             g_stats.writer_late_max = slept_ms - asked_ms;
@@ -530,6 +541,7 @@ void Plugin::StartCrumbs() {
             log_files_->WriteCrumb(std::string("sleep: the trail of this launch begins | tick ") +
                                    std::to_string(static_cast<u32>(platform::NowMs())) + " ms | written at console clock " + stamp);
         }
+        while (!crumb_stop_.load()) {
             const s64 wait_ns = crumbs_.watching() ? static_cast<s64>(SleepCrumbs::kPollMs) * 1000000LL : -1;
             svcWaitSynchronization(crumb_wake_, wait_ns);
             if (crumb_stop_.load()) {
@@ -839,6 +851,7 @@ void Plugin::LogStats(u64 now_ms) {
     const bool eventful = s.net_stalls || s.loss_deferred || s.loss_resumed || s.loss_declared || s.transport_down[0] ||
                           s.transport_down[1] || s.transport_down[2] || s.presence_host_gone || s.node_removed[3] ||
                           s.node_removed[4] || s.hle_declined;
+    if (rx == 0 && tx == 0 && s.ipc_requests == 0 && !eventful) {
         // Nothing going on (menus, no session): one line per minute is enough to show we are alive.
         if (++quiet % 12 != 1) {
             return;
@@ -1099,6 +1112,7 @@ void Plugin::LogStatsWire(const Stats& s) {
 // went into the ring in the window by lane, what did not and why (no room / the lock was busy for longer than a
 // producer waits), how many IPC calls the diet counted instead of writing, and how full the ring got.
 void Plugin::LogStatsCapture() {
+    if (!DebugRingReady()) {
         return;
     }
     const CaptureTotals now = DebugCaptureTotals();
@@ -1156,6 +1170,7 @@ void Plugin::CheckStatsWarnings(const Stats& s, u64 now_ms) {
 // screen than the production one): the writer's time in the SD card over the window, and the share of the capture's heavy
 // records the ring dropped. Once a minute at most (Warn), and in the log as every warning.
 void Plugin::CheckDebugLoad(const Stats& s) {
+    if (g_debug_level <= 0 || !DebugRingReady()) {
         return;
     }
     const u32 card_pct = static_cast<u32>(azl_ticks_to_ms(s.t_writer_wait) * 100 / kStatsIntervalMs);
@@ -1197,9 +1212,11 @@ void Plugin::SampleUdsActivity(u64 now_ms) {
 // free", whatever the figure: a game that takes its whole region at once is normal); a later reading that FELL below the limit
 // says so ("Game memory almost full: 3 MB free"), once each time it falls.
 void Plugin::CheckGameMemory(u64 now_ms) {
+    if (!active_) {
         return; // (the plugin is off for this launch: it has nothing to say about a game it is not in)
     }
     const u32 uptime = static_cast<u32>(now_ms - start_ms_);
+    if (!mem_watch_.Due(uptime)) {
         return;
     }
     s64 region = 0;
@@ -1243,6 +1260,7 @@ bool Plugin::Warn(int kind, const std::string& message) {
 
 long Plugin::HeapFreeBytes() const {
     const unsigned long capacity = HeapCapacity();
+    if (!capacity) {
         return -1;
     }
     const unsigned long used = static_cast<unsigned long>(mallinfo().uordblks);
@@ -1300,6 +1318,7 @@ void Plugin::SampleLinkState(u64 now_ms) {
     if (link_known_ && strength == link_strength_ && state == link_state_) {
         return;
     }
+    if (!link_known_) {
         Log("link: shared page wifi strength %u, network state %u (first sample; room: %s)", strength, state,
             RoomClient::StateName(room_->state()));
     } else if (link_changes_ < 200) {
@@ -1313,6 +1332,7 @@ void Plugin::SampleLinkState(u64 now_ms) {
 }
 
 void Plugin::CheckSocketBuffer() {
+    if (g_rcvbuf_asked <= 0 || !azl_rcvbuf_degraded(g_rcvbuf_asked, g_rcvbuf_got)) {
         return; // as asked (or unreadable: the log line of the socket layer says so)
     }
     char text[96];
@@ -1350,6 +1370,7 @@ void Plugin::EarlyInit() {
         g_debug_level = 1;
         // The capture must be ready before the first hooked IPC call of the game (it has nothing to capture while
         // the plugin is off).
+        capture_ready = !active_ || DebugInit();
     }
     if (g_debug_level > 0) {
         // (the console's own clock, to line the log up with the PC's and with the dates of the files on the card:
@@ -1358,6 +1379,7 @@ void Plugin::EarlyInit() {
         FormatConsoleClock(osGetTime(), stamp);
         Log("==== AzaharLink %s (built %s %s), console clock %s ====", kVersion, __DATE__, __TIME__, stamp);
     }
+    if (!capture_ready) {
         Log("debug: not enough memory for the capture ring: only AzaharLink.log is written");
     }
 
@@ -1426,7 +1448,9 @@ void Plugin::EarlyInit() {
     if (active_) {
         // The hooks give the game a wireless that leads into the room through sockets: without
         // memory for them the plugin stays out of the game (the real wireless keeps working).
+        const bool reserved = !bootdiag::Skip("soc") && ReserveSocketMemory();
         LogMemory(reserved ? "with the socket buffer" : "without a socket buffer");
+        if (!reserved) {
             active_ = false;
             startup_issue_ = "No memory for the network: AzaharLink is OFF for this launch";
             Log("plugin OFF for this launch: no memory for the network");
@@ -1436,6 +1460,7 @@ void Plugin::EarlyInit() {
         if (startup_issue_.empty() && settings_issue) {
             startup_issue_ = settings_issue;
         }
+        if (!startup_issue_.empty()) {
             PostNotification(startup_issue_);
         }
     }
@@ -1444,6 +1469,7 @@ void Plugin::EarlyInit() {
 
     UdsEngine::Transport transport;
     transport.send = [this](WifiPacket& packet) {
+        if (!room_->joined()) {
             return; // not in a room: frames go nowhere, like an emulator without a connection
         }
         packet.transmitter_address = room_->mac();
@@ -1491,6 +1517,7 @@ void Plugin::EarlyInit() {
         }
         // What the end of the link means for the game's session (and what the screen says about it).
         const bool said = left_joined && OnRoomLeft(error);
+        if (state == RoomClient::State::Idle && error != RoomClient::Error::None && !left_joined) {
             // An attempt to join that did not get there: which one, why, and the errno of the socket call that failed
             // (the next one is the policy's: 2 s later, or when the WiFi is back - see RejoinPolicy).
             const int err = room_->last_errno();
@@ -1511,6 +1538,7 @@ void Plugin::EarlyInit() {
                 static_cast<unsigned>(info.members.size()), static_cast<unsigned>(info.member_slots),
                 members.c_str());
             last_notified_error_ = -1;
+            if (!OnRoomJoined()) {
                 PostNotification("Joined room \"" + info.name + "\" (" +
                                  std::to_string(info.members.size()) + " players)");
             }
@@ -1518,6 +1546,7 @@ void Plugin::EarlyInit() {
                    static_cast<int>(error) != last_notified_error_) {
             // Once per distinct error: a reconnect loop must not cover the game with overlays.
             last_notified_error_ = static_cast<int>(error);
+            if (!said) {
                 PostNotification(std::string("Room: ") + RoomClient::ErrorName(error));
             }
         }
@@ -1545,6 +1574,7 @@ void Plugin::EarlyInit() {
         });
         SetHomeObserver([]() { Plugin::Get().OnHomeButton(); });
         SetAptObserver(&Plugin::NoteSleepEvent); // (the trail of a sleep: with the log on)
+        if (!bootdiag::Skip("hooks")) {
             hook_stats_ = InstallSvcHooks(hle_.get());
         }
     }
@@ -1591,6 +1621,7 @@ void Plugin::ResolveIdentity() {
 }
 
 void Plugin::ResolveGameName() {
+    if (!config_.game_name.empty()) {
         platform::LockGuard lock(name_mutex_);
         game_name_ = config_.game_name;
         name_source_ = NameSource::Config;
@@ -1607,6 +1638,7 @@ void Plugin::ResolveGameName() {
             source = "title archive icon";
         }
         fsExit();
+        if (!title.empty()) {
             platform::LockGuard lock(name_mutex_);
             Log("game: name '%s' from the %s (the process name was '%s')", title.c_str(), source,
                 process_name_.c_str());
@@ -1654,6 +1686,7 @@ void Plugin::OnRoomInfo(const room::RoomInfo& info) {
             if (name_source_ != NameSource::ProcessName) {
                 if (name != game_name_) {
                     static bool said = false;
+                    if (!said) {
                         said = true;
                         Log("game: '%s' says our game is called '%s', keeping '%s'",
                             member.nickname.c_str(), name.c_str(), game_name_.c_str());
@@ -1697,6 +1730,7 @@ void Plugin::NoteRoomMembers(const room::RoomInfo& info) {
 
 void Plugin::Announce(const std::string& text) {
     const std::string now_text = announcer_.Offer(text, platform::NowMs());
+    if (!now_text.empty()) {
         PostNotification(now_text);
     }
 }
@@ -1755,6 +1789,7 @@ bool Plugin::OnRoomJoined() {
     case LossGuard::Outcome::Nothing:
         break;
     }
+    if (!session_dropped_.exchange(false)) {
         return false;
     }
     Announce("Back in the room: reopen the lobby");
@@ -1786,6 +1821,7 @@ void Plugin::OnSleepEnter() {
     // sleep_stop off (the default) the sleep is only logged and the session is left to the room's timeouts.
     const bool acts = SleepActs();
     sleep_.Enter(static_cast<u32>(platform::NowMs()), acts);
+    if (!acts) {
         LogLine line;
         if (config_.sleep_stop == 0) {
             line.Str("sleep: the console goes to sleep (APT notification 5): sleep_stop is off, nothing is done");
@@ -1818,4 +1854,576 @@ void Plugin::OnHomeButton() {
 // <<< game-thread code
 
 void Plugin::HandleWake(u64 now_ms) {
-    // (
+    // (`acts` is only looked at when the framework reported a wake-up: with sleep_stop=1 working it out takes the engine's
+    // lock, which this frame callback has no business with on every frame)
+    const bool acts = sleep_.NeedsActs(event_count_[kEventSleepExit]) && SleepActs();
+    const SleepWatch::Result r = sleep_.Update(static_cast<u32>(now_ms), event_count_[kEventSleepEnter],
+                                               event_count_[kEventSleepExit], acts);
+    if (r.apt_wake) {
+        Log("sleep: the console woke up (APT notification 6)");
+    }
+    if (r.fw_wake) {
+        Log("sleep: the framework reports that the console woke up");
+    }
+    if (r.missed) {
+        // The game's APT calls never showed us this sleep (it may not ask the system, or not through a call we see):
+        // the link under the session is stale all the same.
+        Log("sleep: the framework saw a sleep that the game's APT calls did not show: the session ends now");
+        rejoin_.NoteLoss(now_ms);
+        if (engine_->OnTransportDown(NetworkStatusChangeReason::RequestFromSystem)) {
+            session_dropped_.store(true);
+        }
+    }
+    if (r.timed_out) {
+        Log("sleep: no wake-up was seen %lu s after the sleep notification: going on",
+            static_cast<unsigned long>(SleepWatch::kWakeWaitMs / 1000));
+    }
+    if (r.woke) {
+        rejoin_.ResetBackoff();
+        Announce("Waking up: reconnecting to the room");
+        if (g_debug_level > 0) {
+            LogClockLine("woke up"); // (the tick stopped in the sleep: the clock says how long it was)
+        }
+    }
+}
+
+void Plugin::LateInit() {
+    if (late_initialized_) {
+        return;
+    }
+    late_initialized_ = true;
+
+    // Open the log files and write what was recorded before the file system was usable. With debug=0 this does
+    // nothing at all: no file is created.
+    log_files_->Open();
+    StartLogWriter();
+
+    const bool loaded = LoadConfig();
+    if (config_.debug > 0 && g_debug_level == 0) {
+        // The settings could not be read at start-up but say "log on" now.
+        log_files_->SetLevel(1, active_);
+    }
+    config_.debug = g_debug_level; // (the menu label and the toggle follow what the log really does)
+    if (g_debug_level > 0 && active_) {
+        StartCrumbs(); // (the trail of a sleep: only with the log on, and only while the hooks are in)
+    }
+    // The settings that act on the lower layers.
+    platform::SetPreferredCore(config_.net_core);
+    azl_enet_socket_buffers = config_.socket_buffers ? 1 : 0;
+    room_->SetFastData(config_.radio_like);
+    Log("config: %s enabled=%d host='%s' port=%u nickname='%s' tunnel=%d autoconnect=%d radio_like=%d"
+        " socket_buffers=%d rcvbuf_kb=%d sleep_stop=%d net_thread_core=%d menu_key=%s",
+        loaded ? "loaded" : "no file,", config_.enabled, config_.host.c_str(), config_.port,
+        config_.nickname.c_str(), config_.tunnel_enabled, config_.autoconnect, config_.radio_like,
+        config_.socket_buffers, config_.rcvbuf_kb, config_.sleep_stop, config_.net_core, config_.menu_key.c_str());
+    Log("debug: log ON (%s)", !active_ ? "AzaharLink.log only: no capture while the plugin is OFF"
+                              : DebugRingReady() ? "AzaharLink.log and AzaharLink.debug.log"
+                                                 : "AzaharLink.log only: no memory for the capture ring");
+
+    if (!active_) {
+        Log("plugin is OFF for this launch (the game uses the real local wireless)");
+        return;
+    }
+    if (!config_.enabled || !config_.tunnel_enabled) {
+        // The settings could not be read at startup but say "off" now: the hooks are in and the
+        // game may already hold fake sessions, so it stays ON until the next launch.
+        Log("WARNING: the settings say OFF but could not be read at startup: staying ON for this launch");
+    }
+
+    // The framework installed its own hooks in the first seconds: check that none of them landed on
+    // one of our patched sites.
+    ReportForeignPatches();
+
+    ResolveIdentity();
+    ResolveGameName();
+    if (g_debug_level > 0) {
+        LogAddressMap();
+    }
+    Log("identity: nickname '%s' (%s), MAC %s, game name '%s'", EffectiveNickname().c_str(),
+        config_.nickname.empty() ? "from the console" : "from the settings",
+        MacToString(console_mac_).c_str(), GameName().c_str());
+
+    if (hook_stats_.send_sync_sites == 0) {
+        Log("WARNING: no svc 0x32 stub found in the game's code: UDS cannot be intercepted");
+        PostNotification("AzaharLink: cannot hook this game (no system call found in its code): multiplayer will not work");
+    }
+}
+
+void Plugin::RequestStop() {
+    // Called from the framework's exit event on a very small stack: flag stores only.
+    shutting_down_.store(true);
+    BeginTeardown();
+    if (room_) {
+        room_->RequestStop(true);
+    }
+    log_stop_.store(true);
+    WakeLogWriter(); // (one svc: fine on this stack)
+    crumb_stop_.store(true);
+    if (crumb_wake_) {
+        svcSignalEvent(crumb_wake_);
+    }
+}
+
+void Plugin::Shutdown() {
+    if (!initialized_ || shut_down_) {
+        return;
+    }
+    shut_down_ = true;
+    shutting_down_.store(true);
+    // The lines nobody has reported yet - the EXIT event above all: the writer reports it too if it wakes first, and
+    // whichever of the two comes first logs it once - come before 'shutdown: begin', so that the end of a log reads in
+    // the order it happened.
+    LogProcessEvents();
+    Log("shutdown: begin (%lu hook sites, network %s)",
+        static_cast<unsigned long>(hook_stats_.send_sync_sites),
+        room_ && room_->state() != RoomClient::State::Idle ? "up" : "idle");
+    // From here the capture has half a second to empty its ring (a full ring on a slow card takes tens of seconds, the writer is
+    // then stuck in the card's writes and the main log's last lines - how the exit went - never reach the file, as on the full
+    // card of the Zelda session: log_files.hpp, LogFileLimits::exit_capture_ms).
+    log_files_->BeginShutdown();
+    // The hooks stay in the game's code on purpose: the game's own threads may still be running
+    // through them while it closes, rewriting live code without invalidating the instruction cache
+    // can crash them, and the trampolines stay mapped until the process dies anyway. The HLE keeps
+    // answering the fake sessions the game still holds.
+
+    // The network thread first, with a deadline: it may be starved or stuck in a service call, and
+    // the framework gives main() about one second before it tears everything down.
+    bool net_stopped = true;
+    if (room_) {
+        net_stopped = room_->StopWithin(kNetStopTimeoutMs);
+    }
+    if (net_stopped) {
+        ShutdownSockets();
+    } else {
+        Log("shutdown: the network thread did not stop in time, leaving its memory alone");
+    }
+    const u32 ndm_anomalies = hle_ ? hle_->ndm_header_anomalies() : 0;
+    if (ndm_anomalies != 0) {
+        Log("shutdown: %lu ndm:u request(s) had a header the firmware's ndm refuses (served as usual)",
+            static_cast<unsigned long>(ndm_anomalies));
+    }
+    if (DebugRingReady()) {
+        // What the capture did over the whole launch (the "stats: capture" lines are per window of 5 s): the figure to compare
+        // two builds, or two games, by.
+        const CaptureTotals t = DebugCaptureTotals();
+        Log("shutdown: the capture took %lu records (control %lu, heavy %lu), lost %lu heavy (ring full %lu, lock busy %lu) and"
+            " %lu control (%lu, %lu), wrote %lu LOST markers; the diet counted %lu IPC calls in %lu lines; ring peak %lu KB",
+            static_cast<unsigned long>(t.records[0] + t.records[1]), static_cast<unsigned long>(t.records[0]),
+            static_cast<unsigned long>(t.records[1]), static_cast<unsigned long>(t.lost_full[1] + t.lost_busy[1]),
+            static_cast<unsigned long>(t.lost_full[1]), static_cast<unsigned long>(t.lost_busy[1]),
+            static_cast<unsigned long>(t.lost_full[0] + t.lost_busy[0]), static_cast<unsigned long>(t.lost_full[0]),
+            static_cast<unsigned long>(t.lost_busy[0]), static_cast<unsigned long>(t.markers),
+            static_cast<unsigned long>(t.agg_calls), static_cast<unsigned long>(t.agg_lines),
+            static_cast<unsigned long>(t.ring_peak / 1024));
+    }
+    Log("shutdown: done");
+
+    log_stop_.store(true);
+    WakeLogWriter();
+    crumb_stop_.store(true);
+    if (crumb_wake_) {
+        svcSignalEvent(crumb_wake_);
+    }
+    // One deadline for both threads (they were told together and stop side by side): the framework leaves main() about a
+    // second, and the writer is the one whose end matters, so it is waited for first.
+    const u64 stop_began_ms = platform::NowMs();
+    const bool writer_stopped = log_thread_.JoinTimeout(kLogStopTimeoutMs);
+    const u64 spent_ms = platform::NowMs() - stop_began_ms;
+    crumb_thread_.JoinTimeout(spent_ms < kLogStopTimeoutMs ? static_cast<u32>(kLogStopTimeoutMs - spent_ms) : 0);
+    if (writer_stopped) {
+        // (A breadcrumb thread that is stuck in a write holds only the trail's lock, which Close() does not wait for.) With the
+        // log off there is nothing to write and no file is open.
+        log_files_->Close();
+    } else {
+        // The writer is still in a write to the card and holds the file lock; it stops after that write (BeginShutdown set its
+        // deadline). The main log's last lines - 'shutdown: done' above all - get a short wait for the lock, not Close()'s full
+        // drain: a long wait would keep the game from leaving.
+        log_files_->FlushWithin(kLogStopTimeoutMs);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------------------------
+
+bool Plugin::LoadConfig() {
+    // The old place (an app older than this build) is read while the new file is missing, never written (SaveConfig writes the new
+    // place; the app moves the file).
+    config_from_old_place_ = File::Exists(kConfigPath) != 1 && File::Exists(kOldConfigPath) == 1;
+    File file;
+    if (File::Open(file, config_from_old_place_ ? kOldConfigPath : kConfigPath, File::READ) != File::SUCCESS) {
+        config_from_old_place_ = false;
+        return false;
+    }
+    const u64 size = file.GetSize();
+    if (size == 0 || size > 4096) {
+        return false;
+    }
+    std::string content(static_cast<std::size_t>(size), '\0');
+    if (file.Read(&content[0], static_cast<u32>(size)) < 0) {
+        return false;
+    }
+
+    std::size_t pos = 0;
+    while (pos < content.size()) {
+        std::size_t end = content.find('\n', pos);
+        if (end == std::string::npos) {
+            end = content.size();
+        }
+        const ini::KeyValue kv = ini::SplitLine(content.substr(pos, end - pos));
+        pos = end + 1;
+        if (!kv.ok) {
+            continue; // (blank, a comment, a line without '=')
+        }
+        const std::string& key = kv.key;
+        const std::string& value = kv.value;
+        if (key == "enabled") {
+            config_.enabled = ini::ParseBool(value, true);
+        } else if (key == "host") {
+            config_.host = value;
+        } else if (key == "port") {
+            const long port = std::strtol(value.c_str(), nullptr, 10);
+            if (port > 0 && port < 65536) {
+                config_.port = static_cast<u16>(port);
+            }
+        } else if (key == "nickname") {
+            // Older versions saved the placeholder name; treat it as "not chosen".
+            config_.nickname = value == kDefaultNickname ? "" : value;
+        } else if (key == "password") {
+            config_.password = value;
+        } else if (key == "tunnel") {
+            config_.tunnel_enabled = ini::ParseBool(value, true);
+        } else if (key == "autoconnect") {
+            config_.autoconnect = ini::ParseBool(value, true);
+        } else if (key == "radio_like") {
+            config_.radio_like = ini::ParseRadioLike(value);
+        } else if (key == "socket_buffers") {
+            config_.socket_buffers = ini::ParseBool(value, true);
+        } else if (key == "net_thread_core") {
+            const long core = std::strtol(value.c_str(), nullptr, 10);
+            if (core >= -1 && core <= 3) { // (2 and 3: the extra cores of a New 3DS; refused by the kernel on an Old 3DS, then -1 is tried)
+                config_.net_core = static_cast<int>(core);
+            }
+        } else if (key == "menu_key") {
+            if (!value.empty()) {
+                config_.menu_key = value; // (a chord, or "off"/"none": see menu_off())
+            }
+        } else if (key == "game_name") {
+            config_.game_name = value;
+        } else if (key == "debug") {
+            config_.debug = ini::DebugLevel(value); // (a 2 of 0.1.14 and older is a 1: the third level is gone)
+        } else if (key == "rcvbuf_kb") {
+            config_.rcvbuf_kb = ini::RcvbufKb(value); // (checked where it is used)
+        } else if (key == "sleep_stop") {
+            config_.sleep_stop = ini::SleepStop(value); // (0, 1, 2: see azl/ini_values.hpp)
+        }
+    }
+    return true;
+}
+
+bool Plugin::SaveConfig() {
+    // All 15 keys, always, in the order the Setup app writes them (ini::Render is the one writer of both): a file made by the
+    // plugin can be edited by hand without knowing which keys exist. The advanced ones, rcvbuf_kb and sleep_stop, used to be
+    // written only when they differed from the default, so a file never showed them.
+    ini::Fields fields;
+    fields.enabled = config_.enabled;
+    fields.host = config_.host;
+    fields.port = config_.port;
+    fields.nickname = config_.nickname;
+    fields.password = config_.password;
+    fields.tunnel = config_.tunnel_enabled;
+    fields.autoconnect = config_.autoconnect;
+    fields.radio_like = config_.radio_like;
+    fields.socket_buffers = config_.socket_buffers;
+    fields.net_thread_core = config_.net_core;
+    fields.menu_key = config_.menu_key;
+    fields.game_name = config_.game_name;
+    fields.debug = config_.debug;
+    fields.rcvbuf_kb = config_.rcvbuf_kb;
+    fields.sleep_stop = config_.sleep_stop;
+    const std::string text = ini::Render(fields);
+
+    File file;
+    MakeDataDir();
+    if (File::Open(file, kConfigPath, File::RWC | File::TRUNCATE | File::SYNC) != File::SUCCESS) {
+        Log("config: cannot write %s", kConfigPath);
+        return false;
+    }
+    return file.Write(text.data(), static_cast<u32>(text.size())) == File::SUCCESS;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Connection management
+// ---------------------------------------------------------------------------------------------
+
+std::string Plugin::EffectiveNickname() const {
+    std::string name = config_.nickname.empty() ? console_name_ : config_.nickname;
+    if (name.empty()) {
+        name = kDefaultNickname;
+    }
+    if (rejoin_.nickname_suffixed()) {
+        // Another console with the same profile name is in the room: tell them apart by MAC.
+        char suffix[8];
+        std::snprintf(suffix, sizeof(suffix), "-%02X%02X", console_mac_[4], console_mac_[5]);
+        if (name.size() + 5 > 20) {
+            name.resize(15);
+        }
+        name += suffix;
+    }
+    return name;
+}
+
+std::string Plugin::JoinedNickname() const {
+    platform::LockGuard lock(name_mutex_);
+    return joined_nickname_;
+}
+
+std::string Plugin::GameName() const {
+    platform::LockGuard lock(name_mutex_);
+    return game_name_;
+}
+
+bool Plugin::Connect() {
+    if (config_.host.empty()) {
+        PostNotification("Set the room address first");
+        return false;
+    }
+    if (!InitSockets()) {
+        if (rejoin_.failures() == 0) {
+            PostNotification(SocketInitFailure()); // (the reason and its code, in the words of the screen)
+        }
+        return false;
+    }
+    rejoin_.NetworkReady();
+    const bool real_mac = rejoin_.prefer_real_mac();
+    RoomClient::Config rc;
+    rc.host = config_.host;
+    rc.port = config_.port;
+    rc.nickname = EffectiveNickname();
+    {
+        platform::LockGuard lock(name_mutex_);
+        joined_nickname_ = rc.nickname;
+    }
+    rc.password = config_.password;
+    rc.preferred_mac = real_mac ? console_mac_ : kNoPreferredMac;
+    char id[32];
+    std::snprintf(id, sizeof(id), "3ds-%02x%02x%02x%02x%02x%02x", console_mac_[0], console_mac_[1],
+                  console_mac_[2], console_mac_[3], console_mac_[4], console_mac_[5]);
+    rc.console_id_hash = id;
+    rc.game_name = GameName();
+    rc.game_id = game_id_;
+    Log("room: connecting to %s:%u as '%s' (%s MAC, game '%s')", rc.host.c_str(), rc.port,
+        rc.nickname.c_str(), real_mac ? "console's own" : "room-assigned",
+        rc.game_name.c_str());
+    return room_->Start(rc);
+}
+
+void Plugin::Disconnect() {
+    room_->Stop();
+}
+
+bool Plugin::Tick(bool want_connected) {
+    if (shutting_down_.load()) {
+        return true;
+    }
+    const u64 now = platform::NowMs();
+    SampleLinkState(now); // (the room thread is not always there when the link goes)
+    if (!log_thread_.running()) {
+        ServiceLog(); // no writer thread (could not be started): fall back to the caller's thread
+    }
+    if (want_connected != want_connected_) {
+        // (the menu's switch, the autoconnect at the start, or the plugin itself switching it off after a fatal error)
+        Log("menu: 'Connect to room' is now %s", want_connected ? "ON" : "OFF");
+    }
+    want_connected_ = want_connected;
+    if (config_.host.empty() && menu_off() && (last_hint_ms_ == 0 || now - last_hint_ms_ >= kHintIntervalMs)) {
+        // With the in-game menu off the address can only come from the settings: say so, now and once a minute,
+        // instead of sitting idle (a message at launch is easily missed behind the game's loading screens).
+        last_hint_ms_ = now;
+        PostNotification("AzaharLink: no room address. Set it in the Setup app (the in-game menu is off)");
+    }
+    const std::string kept = announcer_.Poll(now); // (a message that came too soon after the last one)
+    if (!kept.empty()) {
+        PostNotification(kept);
+    }
+    HandleWake(now);
+    if (sleep_.sleeping()) {
+        return true; // the console is going to sleep, or just woke up: no new link before the wake-up is seen
+    }
+    if (guard_.Due(now)) {
+        // The room did not take this member back in time: the pause of the network thread was not all there was to it.
+        DropSession(RoomClient::Error::LostConnection);
+    }
+
+    RejoinPolicy::Input in;
+    in.want_connected = want_connected;
+    in.state = room_->state();
+    in.error = room_->error();
+    in.now_ms = now;
+    in.launch_ms = start_ms_;
+    in.nickname_automatic = config_.nickname.empty();
+    // The console's WiFi (the shared page, a free read): the policy looks at it every 500 ms and makes no attempt to join
+    // while it is down.
+    in.wifi_state = *reinterpret_cast<volatile const u8*>(kSharedPageWifiState);
+    const RejoinPolicy::Step step = rejoin_.Update(in);
+    if (step.wifi == RejoinPolicy::WifiNote::Down) {
+        Log("room: the console's WiFi is down (network state %lu): no attempt to join the room until it is back, the state"
+            " is read every %lu ms",
+            static_cast<unsigned long>(step.wifi_state), static_cast<unsigned long>(RejoinPolicy::kWifiPollMs));
+        Announce("WiFi is down: joining the room again when it is back");
+    } else if (step.wifi == RejoinPolicy::WifiNote::Back) {
+        Log("room: the console's WiFi is back (network state %lu) after %lu ms: joining the room at once",
+            static_cast<unsigned long>(in.wifi_state), static_cast<unsigned long>(step.wifi_down_ms));
+    }
+    if (step.disconnect) {
+        Disconnect();
+    }
+    if (step.clear_error) {
+        // Switching "Connect to room" off is the user's way to start over. The last error stays visible in the
+        // status line meanwhile; it is forgotten when the user switches it on again (a fatal one such as a wrong
+        // password would otherwise block every later attempt).
+        room_->ClearError();
+        last_notified_error_ = -1; // announce the next failure again
+    }
+    if (!want_connected || !step.alive) {
+        if (guard_.Settle()) {
+            DropSession(RoomClient::Error::LostConnection); // (no rejoin is coming: the session cannot be resurrected)
+        }
+        return step.alive;
+    }
+    switch (step.note) {
+    case RejoinPolicy::Note::MacTaken:
+        Log("room: the console's MAC is taken, retrying with a room-assigned one");
+        break;
+    case RejoinPolicy::Note::NameTaken:
+        Log("room: name '%s' is taken, retrying with the MAC suffix", EffectiveNickname().c_str());
+        break;
+    case RejoinPolicy::Note::OldLink:
+        Log("room: the room still lists this console's old link: waiting for it to go (up to %lu s from the loss)",
+            static_cast<unsigned long>(RejoinPolicy::kOldLinkMs / 1000));
+        Announce("Waiting for the room to drop the old link");
+        break;
+    case RejoinPolicy::Note::None:
+        break;
+    }
+    if (step.connect && !Connect()) {
+        // Not having an address, or a network layer that will not start after a few tries, is not going to fix
+        // itself: stop instead of retrying (and nagging) forever.
+        const bool has_host = !config_.host.empty();
+        if (!rejoin_.AttemptFailed(has_host) && has_host) {
+            PostNotification("Network unavailable: giving up after several failed tries");
+        }
+    }
+    return !rejoin_.gave_up();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Status / notifications
+// ---------------------------------------------------------------------------------------------
+
+std::string Plugin::StatusLine() {
+    const RoomClient::State state = room_->state();
+    switch (state) {
+    case RoomClient::State::Idle: {
+        const RoomClient::Error error = room_->error();
+        const u64 now = platform::NowMs();
+        if (want_connected_ && !rejoin_.gave_up() && rejoin_.waiting_for_wifi()) {
+            return "Waiting for the console's WiFi" +
+                   (error != RoomClient::Error::None ? std::string(" - ") + RoomClient::ErrorName(error) : std::string());
+        }
+        // An attempt has failed or the link was lost, and the plugin is going to try again.
+        if (want_connected_ && !rejoin_.gave_up() && rejoin_.attempts() > 0 &&
+            (!RejoinPolicy::IsFatal(error) || rejoin_.InOldLinkWindow(now))) {
+            return "Reconnecting (attempt " + std::to_string(rejoin_.attempts()) + ", next in " +
+                   std::to_string((rejoin_.NextAttemptInMs(now) + 999) / 1000) + " s)" +
+                   (error != RoomClient::Error::None ? std::string(" - ") + RoomClient::ErrorName(error) : std::string());
+        }
+        if (error != RoomClient::Error::None) {
+            return std::string("Not connected - ") + RoomClient::ErrorName(error);
+        }
+        return "Not connected";
+    }
+    case RoomClient::State::Connecting:
+        return "Connecting...";
+    case RoomClient::State::Joining:
+        return "Joining the room...";
+    case RoomClient::State::Joined: {
+        const room::RoomInfo info = room_->room_info();
+        return "In room \"" + info.name + "\" (" + std::to_string(info.members.size()) + " players)";
+    }
+    }
+    return "?";
+}
+
+std::string Plugin::DetailText() {
+    // The message box shows 13 lines of about 45 characters and scrolls: what the page is for comes first.
+    std::string text = StatusLine() + "\n";
+    if (!startup_issue_.empty()) {
+        bool first = true;
+        for (const std::string& line : WrapLines(startup_issue_, kDetailChars)) {
+            text += (first ? "!! " : "   ") + line + "\n";
+            first = false;
+        }
+    }
+    // The numbers of the last statistics window: counted at every debug level (the log has them in more detail).
+    StatusNumbers numbers;
+    gamemem::Reading memory;
+    {
+        platform::LockGuard lock(status_mutex_);
+        numbers = status_numbers_;
+        memory = mem_reading_;
+    }
+    // What the game has left of its memory, read again every 30 s (the first reading is 20 s after the start).
+    text += gamemem::StatusText(memory) + "\n";
+    text += FormatStatusNumbers(numbers) + "\n\n";
+    if (room_->joined()) {
+        const room::RoomInfo info = room_->room_info();
+        text += "Players:\n";
+        for (const auto& member : info.members) {
+            text += " - " + member.nickname;
+            if (!member.game_name.empty()) {
+                text += " [" + member.game_name + "]";
+            }
+            text += "\n";
+        }
+        text += "My MAC in the room: " + MacToString(room_->mac()) + "\n";
+    }
+    text += "Me: " + EffectiveNickname() + " [" + GameName() + "]\n";
+    text += "Hook sites: " + std::to_string(hook_stats_.send_sync_sites) + " / " +
+            std::to_string(hook_stats_.close_sites);
+    text += "\nUDS sessions: " + std::to_string(hle_->sessions()) +
+            ", requests: " + std::to_string(hle_->requests());
+    text += "\nUDS status: " + std::to_string(static_cast<unsigned>(engine_->status()));
+    text += std::string("\nVersion ") + kVersion;
+    return text;
+}
+
+void Plugin::PostNotification(const std::string& message) {
+    if (shutting_down_.load()) {
+        return; // no overlays while the game is closing (the framework draws them in the game's
+                // own graphics code, which is being torn down)
+    }
+    platform::LockGuard lock(notify_mutex_);
+    if (notifications_.size() < 16) {
+        notifications_.push_back(message);
+    }
+}
+
+std::vector<std::string> Plugin::TakeNotifications() {
+    platform::LockGuard lock(notify_mutex_);
+    std::vector<std::string> out;
+    if (!shutting_down_.load()) {
+        // One overlay line is about 60 characters of the framework's font: a longer message goes on several lines
+        // instead of being cut off at the edge of the screen.
+        for (const std::string& message : notifications_) {
+            for (const std::string& line : WrapLines(message, kToastChars)) {
+                out.push_back(line);
+            }
+        }
+    }
+    notifications_.clear();
+    return out;
+}
+
+} // namespace ctr
+} // namespace azl

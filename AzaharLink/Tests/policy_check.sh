@@ -107,7 +107,7 @@ need Includes/azl/log_files.hpp "int keep = 49;" "50 blocks a log at most (49 be
 need Sources/azl/log_files.cpp "const int next = block_hi_[kind] + 1;" "a rotated file takes the number after the highest block: the blocks read in order and never go back"
 # The list of saved rooms: servers.txt in the app's data folder (a name and an address for each: "host[:port]|name"), 10 rooms at most
 need ConfigApp/source/paths.hpp 'kServersFileName = "servers.txt";' "the saved rooms live in servers.txt in the data folder"
-need ConfigApp/source/settings.hpp "static constexpr std::size_t kMax = 50;" "the list of saved rooms holds 50"
+need ConfigApp/source/settings.hpp "static constexpr std::size_t kMax = 10;" "the list of saved rooms holds 10"
 need ConfigApp/source/settings.hpp "constexpr std::size_t kMaxServerNameChars = 12;" "a room's name is 12 characters at most"
 need ConfigApp/source/settings.cpp 'out += "|" + s.name;' "the file keeps a room's name after its address, after a '|'"
 need ConfigApp/source/settings.cpp "const std::size_t bar = line.find('|');" "a line of the servers file is 'host[:port]' (as in the earlier builds) with an optional '|name'"
