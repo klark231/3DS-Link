@@ -265,6 +265,14 @@ protected:
                    "A page with the room's name, address, port and password. The new room is tested at once and, when it answers, used from "
                    "now on. The list keeps 10 rooms.";
         rows.push_back(add);
+        Row lobby;
+        lobby.id = kLobby;
+        lobby.kind = Kind::Action;
+        lobby.label = "Browse public rooms...";
+        lobby.mark = Mark::Slot;
+        lobby.note_title = "Public rooms";
+        lobby.note = "The rooms of an Azahar lobby server (its web API address): pick one and it is tested and used, like a room added by hand.";
+        rows.push_back(lobby);
     }
 
     void Activate(const Row& row, int step) override {
@@ -273,13 +281,15 @@ protected:
         }
         if (row.id == kAdd) {
             AddServer();
+        } else if (row.id == kLobby) {
+            PushPage(pages::NewLobbyPage());
         } else if (row.id >= kServerBase) {
             Use(static_cast<std::size_t>(row.id - kServerBase));
         }
     }
 
 private:
-    enum Id { kAdd = 1, kServerBase = 100 };
+    enum Id { kAdd = 1, kLobby = 2, kServerBase = 100 };
 
     // The ini keeps the room 3DS Link joins (with its password); the list only remembers rooms.
     void Select(const setup::Server server) { // (by value: the list is rearranged below)
