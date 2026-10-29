@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace azl::chat {
 
@@ -316,6 +317,24 @@ public:
         }
     }
 
+    /// While the touch is being hidden the framework's own touch reading sees the cleared page almost all the time. The scrubber therefore
+    /// looks at the learned words BEFORE it clears them: a fresh non-zero position there means the HID service has just written a touch. Gives
+    /// the position of the first learned word that holds one (x in the low half, y in the high half).
+    bool Peek(const volatile std::uint32_t* page, std::uint32_t& xy) const {
+        if (!page) {
+            return false;
+        }
+        const std::size_t n = n_touch_.load(std::memory_order_acquire);
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::uint32_t v = page[touch_[i]];
+            if (v != 0) {
+                xy = v;
+                return true;
+            }
+        }
+        return false;
+    }
+
     std::size_t touch_slots() const {
         return n_touch_.load(std::memory_order_acquire);
     }
@@ -340,5 +359,226 @@ private:
     std::atomic<bool> pad_seen_{false};
     std::uint16_t touch_[kMaxSlots] = {};
 };
+
+// ---------------------------------------------------------------------------------------------
+// Switching rooms from the overlay: the saved room lists and the picker (no console needed to test them)
+// ---------------------------------------------------------------------------------------------
+
+constexpr int kRoomLists = 5;              ///< servers.txt (list 1), servers2.txt ... servers5.txt
+constexpr std::size_t kRoomsPerList = 50;  ///< rooms read from one list file (the app writes 10; a hand-made file may hold more)
+constexpr std::size_t kRoomRows = 5;       ///< rooms shown at once
+constexpr std::uint16_t kDefaultRoomPort = 24872;
+
+struct RoomEntry {
+    std::string name;     ///< may be empty
+    std::string host;
+    std::uint16_t port = kDefaultRoomPort;
+    std::string password; ///< may be empty
+};
+
+/// The file of list `n` (1..kRoomLists): "servers.txt" for 1 (the file the app has always written), "servers<n>.txt" after.
+inline std::string RoomListFile(int n) {
+    return n <= 1 ? std::string("servers.txt") : "servers" + std::to_string(n) + ".txt";
+}
+
+/// One line of a list file: "host[:port]", "host[:port]|name" or "host[:port]|name|password" (the format of the app's servers.txt; the
+/// password is everything after the second bar). A blank line, a comment (#) or a line whose host or port is not valid gives false.
+inline bool ParseRoomLine(const std::string& raw, RoomEntry& out) {
+    std::string line = raw;
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ' || line.back() == '\t')) {
+        line.pop_back();
+    }
+    std::size_t start = 0;
+    while (start < line.size() && (line[start] == ' ' || line[start] == '\t')) {
+        ++start;
+    }
+    line.erase(0, start);
+    if (line.empty() || line[0] == '#') {
+        return false;
+    }
+    const std::size_t bar1 = line.find('|');
+    std::string address = line.substr(0, bar1);
+    RoomEntry e;
+    if (bar1 != std::string::npos) {
+        const std::size_t bar2 = line.find('|', bar1 + 1);
+        e.name = Clean(line.substr(bar1 + 1, bar2 == std::string::npos ? std::string::npos : bar2 - bar1 - 1), 12);
+        if (bar2 != std::string::npos) {
+            e.password = line.substr(bar2 + 1);
+            if (e.password.size() > 64) {
+                e.password.resize(64);
+            }
+        }
+    }
+    std::string host = address;
+    const std::size_t colon = address.rfind(':');
+    if (colon != std::string::npos) {
+        host = address.substr(0, colon);
+        const std::string port_text = address.substr(colon + 1);
+        if (port_text.empty() || port_text.size() > 5) {
+            return false;
+        }
+        unsigned long port = 0;
+        for (char c : port_text) {
+            if (c < '0' || c > '9') {
+                return false;
+            }
+            port = port * 10 + static_cast<unsigned long>(c - '0');
+        }
+        if (port == 0 || port > 65535) {
+            return false;
+        }
+        e.port = static_cast<std::uint16_t>(port);
+    }
+    if (host.empty() || host.size() > 100) {
+        return false;
+    }
+    for (unsigned char c : host) {
+        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '-' || c == '_';
+        if (!ok) {
+            return false;
+        }
+    }
+    e.host = host;
+    out = e;
+    return true;
+}
+
+/// The rooms of a list file's text, in file order, at most `max`.
+inline std::vector<RoomEntry> ParseRoomList(const std::string& text, std::size_t max = kRoomsPerList) {
+    std::vector<RoomEntry> rooms;
+    std::size_t pos = 0;
+    while (pos < text.size() && rooms.size() < max) {
+        std::size_t end = text.find('\n', pos);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        RoomEntry e;
+        if (ParseRoomLine(text.substr(pos, end - pos), e)) {
+            rooms.push_back(e);
+        }
+        pos = end + 1;
+    }
+    return rooms;
+}
+
+/// What a row shows: the name, else host:port (the port left out when it is the default).
+inline std::string RoomLabel(const RoomEntry& e) {
+    std::string text = e.host;
+    if (e.port != kDefaultRoomPort) {
+        text += ":" + std::to_string(e.port);
+    }
+    return Clean(e.name, 12).empty() ? text : Clean(e.name, 12) + "  " + text;
+}
+
+/// The button that opens the picker (left of CHAT).
+constexpr Key kRoomsButton = {204, 2, 56, 18, 0, 0, Key::Char, "ROOMS"};
+/// The picker (bottom screen): a header with Close, kRoomRows rows, then Up / Down / List.
+constexpr Key kPickClose = {262, 2, 56, 18, 0, 0, Key::Close, "Close"};
+constexpr int kRowsY = 26;
+constexpr int kRowH = 24;
+constexpr Key kPickUp = {4, 154, 60, 24, 0, 0, Key::Char, "Up"};
+constexpr Key kPickDown = {68, 154, 60, 24, 0, 0, Key::Char, "Down"};
+constexpr Key kPickList = {132, 154, 184, 24, 0, 0, Key::Char, nullptr}; // "List n/5": the label is drawn with the number
+
+/// The room picker as a state machine: feed it the touch once per frame. The overlay owns the list (SetRooms) and loads the file
+/// of the list the picker asks for (Event::ChangeList). A tap acts on the press.
+class RoomPicker {
+public:
+    enum class Event { None, Opened, Closed, Pick, ChangeList };
+
+    Event OnTouch(bool down, int x, int y) {
+        const bool pressed = down && !was_down_;
+        was_down_ = down;
+        if (!pressed) {
+            return Event::None;
+        }
+        if (!open_) {
+            if (Inside(kRoomsButton, x, y)) {
+                open_ = true;
+                return Event::Opened;
+            }
+            return Event::None;
+        }
+        if (Inside(kPickClose, x, y)) {
+            open_ = false;
+            return Event::Closed;
+        }
+        if (Inside(kPickUp, x, y)) {
+            if (first_ >= kRoomRows) {
+                first_ -= kRoomRows;
+            } else {
+                first_ = 0;
+            }
+            return Event::None;
+        }
+        if (Inside(kPickDown, x, y)) {
+            if (first_ + kRoomRows < rooms_.size()) {
+                first_ += kRoomRows;
+            }
+            return Event::None;
+        }
+        if (Inside(kPickList, x, y)) {
+            list_ = list_ % kRoomLists + 1;
+            first_ = 0;
+            rooms_.clear();
+            return Event::ChangeList;
+        }
+        if (y >= kRowsY && y < kRowsY + static_cast<int>(kRoomRows) * kRowH) {
+            const std::size_t i = first_ + static_cast<std::size_t>((y - kRowsY) / kRowH);
+            if (i < rooms_.size()) {
+                picked_ = i;
+                open_ = false;
+                return Event::Pick;
+            }
+        }
+        return Event::None;
+    }
+
+    void SetRooms(std::vector<RoomEntry> rooms) {
+        rooms_ = std::move(rooms);
+        first_ = 0;
+    }
+    const RoomEntry& picked() const {
+        return rooms_[picked_ < rooms_.size() ? picked_ : 0];
+    }
+    bool has_picked() const {
+        return picked_ < rooms_.size();
+    }
+    bool is_open() const {
+        return open_;
+    }
+    int list() const {
+        return list_;
+    }
+    std::size_t first() const {
+        return first_;
+    }
+    const std::vector<RoomEntry>& rooms() const {
+        return rooms_;
+    }
+
+private:
+    static bool Inside(const Key& k, int x, int y) {
+        return x >= k.x && x < k.x + k.w && y >= k.y && y < k.y + k.h;
+    }
+    bool open_ = false;
+    bool was_down_ = false;
+    int list_ = 1;
+    std::size_t first_ = 0;
+    std::size_t picked_ = static_cast<std::size_t>(-1);
+    std::vector<RoomEntry> rooms_;
+};
+
+/// Games whose memory is so tight that even the overlay's few KB are not worth the risk: the overlay does not start there. Matched on the low
+/// half of the title id (every region of a game has its own). Monster Hunter XX (Rabbit_R) crashed with the plugin loaded (data abort writing 0xC000, a null allocation); add more title ids here.
+inline bool OverlayDisabledFor(std::uint64_t title_id) {
+    static const std::uint32_t kLow[] = {0x00197100u};
+    for (std::uint32_t v : kLow) {
+        if (static_cast<std::uint32_t>(title_id & 0xFFFFFFFFu) == v) {
+            return true;
+        }
+    }
+    return false;
+}
 
 } // namespace azl::chat

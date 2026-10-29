@@ -155,11 +155,68 @@ int main() {
         CHECK(ts.touch_slots() == 3);
         ts.Scrub(page);
         CHECK(page[0xE4 / 4] == 0);
+        {   // Peek: what the HID service wrote since the last clear, read before clearing
+            std::uint32_t got = 0;
+            CHECK(!ts.Peek(page, got));                                  // everything was cleared above
+            page[0xD4 / 4] = 100u | (150u << 16);
+            CHECK(ts.Peek(page, got) && got == (100u | (150u << 16)));
+            CHECK(!ts.Peek(nullptr, got));
+            ts.Scrub(page);
+            CHECK(!ts.Peek(page, got));
+        }
         chat::TouchScrubber none;                                    // a position that is nowhere in the page learns nothing
         none.Learn(page, 4000, 4000);
         CHECK(none.touch_slots() == 0);
         none.Learn(nullptr, 1, 1);
         none.Scrub(nullptr);                                         // (no crash without a page)
+    }
+
+    // --- the saved room lists and the picker
+    {
+        CHECK(chat::RoomListFile(1) == "servers.txt" && chat::RoomListFile(2) == "servers2.txt" && chat::RoomListFile(5) == "servers5.txt");
+        chat::RoomEntry e;
+        CHECK(chat::ParseRoomLine("192.168.1.20:25000|Home PC|pa|ss", e) && e.host == "192.168.1.20" && e.port == 25000 && e.name == "Home PC" &&
+              e.password == "pa|ss");
+        CHECK(chat::ParseRoomLine("mh.example.net", e) && e.port == 24872 && e.name.empty() && e.password.empty());
+        CHECK(chat::ParseRoomLine("host||secret\r", e) && e.name.empty() && e.password == "secret");
+        CHECK(!chat::ParseRoomLine("", e) && !chat::ParseRoomLine("# comment", e) && !chat::ParseRoomLine("bad host", e));
+        CHECK(!chat::ParseRoomLine("h:0", e) && !chat::ParseRoomLine("h:70000", e) && !chat::ParseRoomLine("h:x", e) && !chat::ParseRoomLine(":24872", e));
+        std::string text;
+        for (int i = 0; i < 60; ++i) text += "h" + std::to_string(i) + ".net|r" + std::to_string(i) + "\n";
+        CHECK(chat::ParseRoomList(text).size() == chat::kRoomsPerList);           // a long file is cut
+        CHECK(chat::ParseRoomList("a\n\n#x\nb:1\r\nbad host\n").size() == 2);
+        CHECK(chat::RoomLabel(chat::RoomEntry{"Home", "h.net", 24872, ""}) == "Home  h.net");
+        CHECK(chat::RoomLabel(chat::RoomEntry{"", "h.net", 25000, ""}) == "h.net:25000");
+
+        chat::RoomPicker pk;
+        std::vector<chat::RoomEntry> rooms;
+        for (int i = 0; i < 7; ++i) rooms.push_back(chat::RoomEntry{"r" + std::to_string(i), "h.net", 24872, ""});
+        pk.SetRooms(rooms);
+        using Ev = chat::RoomPicker::Event;
+        const int rb_x = chat::kRoomsButton.x + 2, rb_y = chat::kRoomsButton.y + 2;
+        CHECK(pk.OnTouch(false, 0, 0) == Ev::None);
+        CHECK(pk.OnTouch(true, 10, 200) == Ev::None && !pk.is_open());              // a tap elsewhere does nothing while closed
+        pk.OnTouch(false, 0, 0);
+        CHECK(pk.OnTouch(true, rb_x, rb_y) == Ev::Opened && pk.is_open());
+        CHECK(pk.OnTouch(true, rb_x, rb_y) == Ev::None);                            // held: no second press
+        pk.OnTouch(false, 0, 0);
+        CHECK(pk.OnTouch(true, chat::kPickDown.x + 2, chat::kPickDown.y + 2) == Ev::None && pk.first() == 5);
+        pk.OnTouch(false, 0, 0);
+        pk.OnTouch(true, chat::kPickDown.x + 2, chat::kPickDown.y + 2);              // already on the last page
+        CHECK(pk.first() == 5);
+        pk.OnTouch(false, 0, 0);
+        CHECK(pk.OnTouch(true, 100, chat::kRowsY + chat::kRowH + 3) == Ev::Pick && pk.has_picked() && pk.picked().name == "r6" && !pk.is_open());
+        pk.OnTouch(false, 0, 0);
+        pk.OnTouch(true, rb_x, rb_y);
+        pk.OnTouch(false, 0, 0);
+        CHECK(pk.OnTouch(true, 100, chat::kRowsY + 4 * chat::kRowH - 2) == Ev::None);  // the row under the last room is empty
+        pk.OnTouch(false, 0, 0);
+        CHECK(pk.OnTouch(true, chat::kPickList.x + 5, chat::kPickList.y + 5) == Ev::ChangeList && pk.list() == 2 && pk.rooms().empty());
+        pk.OnTouch(false, 0, 0);
+        for (int i = 0; i < 4; ++i) { pk.OnTouch(true, chat::kPickList.x + 5, chat::kPickList.y + 5); pk.OnTouch(false, 0, 0); }
+        CHECK(pk.list() == 1);                                                     // 2,3,4,5 then back to 1
+        CHECK(pk.OnTouch(true, chat::kPickClose.x + 2, chat::kPickClose.y + 2) == Ev::Closed && !pk.is_open());
+        CHECK(chat::OverlayDisabledFor(0x0004000000197100ull) && !chat::OverlayDisabledFor(0x0004000000187000ull));
     }
     std::printf(fails ? "chat_test: %d FAILED\n" : "chat_test: ALL OK\n", fails);
     return fails ? 1 : 0;

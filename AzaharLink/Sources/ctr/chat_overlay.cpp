@@ -6,6 +6,8 @@
 #include <CTRPluginFramework.hpp>
 
 #include <atomic>
+#include <string>
+#include <vector>
 
 #include "azl/chat.hpp"
 #include "azl/platform.hpp"
@@ -22,10 +24,21 @@ using namespace CTRPluginFramework;
 
 azl::chat::Log g_log;
 azl::chat::Keyboard g_keyboard;
+azl::chat::RoomPicker g_picker;
+SwitchFn g_switch = nullptr;
+ReadListFn g_read_list = nullptr;
+bool g_swallow = false;                 // a touch that closed the picker goes on until released: the keyboard must not see it (Close sits where CHAT is)
+bool g_list_loaded = false;
 azl::chat::TouchScrubber g_scrub;       // learns where the live touch sits in the HID shared page, and clears it there
 std::atomic<bool> g_hide{false};        // true while the keyboard is open (or the CHAT button is being pressed): the game must not see the touch
 std::atomic<bool> g_run{false};
-azl::platform::Thread g_scrub_thread;
+// What the scrub thread saw of the touch just before it cleared it (the framework's own reading is cleared more often than it is looked at).
+std::atomic<std::uint32_t> g_snap_xy{0};
+std::atomic<std::uint32_t> g_snap_ms{0};
+constexpr std::uint32_t kSnapFreshMs = 40; // a touch seen within this time is still down (the HID service writes a sample every few ms)
+azl::platform::Thread g_scrub_thread;   // clears the touch every millisecond
+azl::platform::Thread g_event_thread;   // clears it the moment the HID service has written a new sample (its pad event)
+bool g_hiding = false;                  // latched: stays on until the finger is up, so a touch that began on the overlay never reaches the game
 std::atomic<azl::RoomClient*> g_room{nullptr};
 bool g_installed = false;
 
@@ -44,6 +57,59 @@ void DrawKey(const Screen& s, const azl::chat::Key& k, bool held, bool shift) {
     s.Draw(label, k.x + (k.w - len * 6) / 2, k.y + (k.h - 10) / 2, Color::White, face);
 }
 
+// One pass of the guard: remember the sample the HID service wrote (the overlay reads the touch from this), then take it away from the game.
+void HideTick() {
+    volatile std::uint32_t* page = reinterpret_cast<volatile std::uint32_t*>(hidSharedMem);
+    std::uint32_t xy = 0;
+    if (g_scrub.Peek(page, xy)) {
+        g_snap_xy.store(xy, std::memory_order_release);
+        g_snap_ms.store(static_cast<std::uint32_t>(azl::platform::NowMs()) | 1u, std::memory_order_release);
+    }
+    g_scrub.Scrub(page);
+}
+
+// The rooms of list `n` (servers.txt, servers2.txt ...): the plugin reads the file (files are touched only by plugin.cpp), only the parsed rooms are kept.
+void LoadList(int n) {
+    std::vector<azl::chat::RoomEntry> rooms;
+    std::string text;
+    if (g_read_list && g_read_list(n, text)) {
+        rooms = azl::chat::ParseRoomList(text);
+    }
+    g_picker.SetRooms(std::move(rooms));
+    g_list_loaded = true;
+}
+
+void DrawPicker(const Screen& screen) {
+    const Color bg(15, 16, 20);
+    screen.DrawRect(0, 0, 320, 240, bg, true);
+    screen.Draw("Rooms", kMargin, 8, Color::White, bg);
+    DrawKey(screen, azl::chat::kPickClose, false, false);
+    const std::vector<azl::chat::RoomEntry>& rooms = g_picker.rooms();
+    if (rooms.empty()) {
+        const std::string file = azl::chat::RoomListFile(g_picker.list());
+        screen.Draw("No rooms in " + file, kMargin, azl::chat::kRowsY + 8, Color(200, 200, 210), bg);
+    }
+    for (std::size_t r = 0; r < azl::chat::kRoomRows; ++r) {
+        const std::size_t i = g_picker.first() + r;
+        if (i >= rooms.size()) {
+            break;
+        }
+        const int y = azl::chat::kRowsY + static_cast<int>(r) * azl::chat::kRowH;
+        const Color face(40, 42, 50);
+        screen.DrawRect(0, y, 319, azl::chat::kRowH - 2, face, true);
+        screen.Draw(azl::chat::RoomLabel(rooms[i]), kMargin, y + 7, Color::White, face);
+    }
+    DrawKey(screen, azl::chat::kPickUp, false, false);
+    DrawKey(screen, azl::chat::kPickDown, false, false);
+    screen.DrawRect(azl::chat::kPickList.x, azl::chat::kPickList.y, azl::chat::kPickList.w - 1, azl::chat::kPickList.h - 1, Color(40, 42, 50), true);
+    const std::string list = "List " + std::to_string(g_picker.list()) + " / " + std::to_string(azl::chat::kRoomLists) + "  (" +
+                             azl::chat::RoomListFile(g_picker.list()) + ")";
+    screen.Draw(list, azl::chat::kPickList.x + 6, azl::chat::kPickList.y + 7, Color::White, Color(40, 42, 50));
+    screen.Draw("Leave the game's lobby first:", kMargin, 190, Color(230, 200, 120), bg);
+    screen.Draw("switching drops the game's link.", kMargin, 202, Color(230, 200, 120), bg);
+    screen.Draw("Tap a room to join it.", kMargin, 220, Color(200, 200, 210), bg);
+}
+
 // Called by the framework once per frame for each screen (the top one, the bottom one).
 bool Frame(const Screen& screen) {
     const u64 now = azl::platform::NowMs();
@@ -56,12 +122,50 @@ bool Frame(const Screen& screen) {
         return true;
     }
     // bottom screen: the touch is read once per frame (here, where the bottom screen is drawn)
-    const bool down = Touch::IsDown();
-    const UIntVector pos = down ? Touch::GetPosition() : UIntVector(0, 0);
-    if (down) {
+    const bool api_down = Touch::IsDown();
+    UIntVector pos = api_down ? Touch::GetPosition() : UIntVector(0, 0);
+    if (api_down) {
         g_scrub.Learn(reinterpret_cast<const volatile std::uint32_t*>(hidSharedMem), pos.x, pos.y); // (no-op until it sees a position it recognises)
     }
-    const auto event = g_keyboard.OnTouch(down, static_cast<int>(pos.x), static_cast<int>(pos.y), now);
+    // While the touch is hidden the page is cleared every millisecond, so the reading above often misses it: the scrub thread keeps the last
+    // position it saw before clearing, and a touch seen within kSnapFreshMs counts as down.
+    bool down = api_down;
+    if (g_hide.load(std::memory_order_acquire)) {
+        const std::uint32_t seen_ms = g_snap_ms.load(std::memory_order_acquire);
+        const std::uint32_t xy = g_snap_xy.load(std::memory_order_acquire);
+        if (seen_ms != 0 && static_cast<std::uint32_t>(now) - seen_ms < kSnapFreshMs && xy != 0) {
+            down = true;
+            pos = UIntVector(xy & 0xFFFFu, xy >> 16);
+        }
+    }
+    const int tx = static_cast<int>(pos.x), ty = static_cast<int>(pos.y);
+    // the picker gets the touch unless the keyboard is open; the keyboard gets it unless the picker is open (or has just closed on this touch)
+    azl::chat::RoomPicker::Event pick = azl::chat::RoomPicker::Event::None;
+    if (!g_keyboard.is_open()) {
+        const bool was_open = g_picker.is_open();
+        pick = g_picker.OnTouch(down, tx, ty);
+        if (pick == azl::chat::RoomPicker::Event::Opened && !g_list_loaded) {
+            LoadList(g_picker.list());
+        } else if (pick == azl::chat::RoomPicker::Event::ChangeList) {
+            LoadList(g_picker.list());
+        } else if (pick == azl::chat::RoomPicker::Event::Pick && g_picker.has_picked()) {
+            const azl::chat::RoomEntry room = g_picker.picked();
+            g_log.Push("sys", "Joining " + azl::chat::RoomLabel(room), now);
+            if (g_switch) {
+                g_switch(room.host.c_str(), room.port, room.password.c_str(), room.name.c_str());
+            }
+        }
+        if (was_open && !g_picker.is_open()) {
+            g_swallow = true;
+        }
+    } else {
+        g_picker.OnTouch(false, 0, 0);
+    }
+    if (!down) {
+        g_swallow = false;
+    }
+    const bool picker_open = g_picker.is_open();
+    const auto event = g_keyboard.OnTouch(down && !picker_open && !g_swallow, tx, ty, now);
     if (event == azl::chat::Keyboard::Event::Send) {
         const std::string message = g_keyboard.TakeMessage();
         azl::RoomClient* room = g_room.load(std::memory_order_acquire);
@@ -70,12 +174,26 @@ bool Frame(const Screen& screen) {
             g_log.Push("me", message, now);
         }
     }
-    const bool over_button = down && pos.x >= static_cast<u32>(azl::chat::kChatButton.x) &&
-                             pos.x < static_cast<u32>(azl::chat::kChatButton.x + azl::chat::kChatButton.w) &&
-                             pos.y >= static_cast<u32>(azl::chat::kChatButton.y) &&
-                             pos.y < static_cast<u32>(azl::chat::kChatButton.y + azl::chat::kChatButton.h);
-    g_hide.store(g_keyboard.is_open() || over_button, std::memory_order_release);
+    const auto inside = [&](const azl::chat::Key& k) {
+        return down && tx >= k.x && tx < k.x + k.w && ty >= k.y && ty < k.y + k.h;
+    };
+    // The game's touchscreen is off while the keyboard or the room list is open, and for as long as a touch that began on the overlay lasts.
+    const bool want_hide = g_keyboard.is_open() || picker_open || g_swallow || inside(azl::chat::kChatButton) || inside(azl::chat::kRoomsButton);
+    if (want_hide) {
+        g_hiding = true;
+    } else if (!down) {
+        g_hiding = false;
+    }
+    g_hide.store(g_hiding, std::memory_order_release);
+    if (g_hiding) {
+        HideTick(); // (and the threads do it between frames)
+    }
+    if (picker_open) {
+        DrawPicker(screen);
+        return true;
+    }
     if (!g_keyboard.is_open()) {
+        DrawKey(screen, azl::chat::kRoomsButton, false, false);
         DrawKey(screen, azl::chat::kChatButton, false, false);
         return true;
     }
@@ -91,7 +209,18 @@ bool Frame(const Screen& screen) {
 
 } // namespace
 
+void SetSwitchHandler(SwitchFn fn) {
+    g_switch = fn;
+}
+
+void SetListReader(ReadListFn fn) {
+    g_read_list = fn;
+}
+
 void Attach(azl::RoomClient& room) {
+    if (azl::chat::OverlayDisabledFor(CTRPluginFramework::Process::GetTitleID())) {
+        return; // a game with no memory to spare: no overlay, no callback, no thread
+    }
     room.SetChatCallback([](const std::string& nick, const std::string& message) {
         g_log.Push(nick, message, azl::platform::NowMs());
     });
@@ -105,9 +234,19 @@ void Attach(azl::RoomClient& room) {
         g_scrub_thread.Start([] {
             while (g_run.load(std::memory_order_acquire)) {
                 if (g_hide.load(std::memory_order_acquire)) {
-                    g_scrub.Scrub(reinterpret_cast<volatile std::uint32_t*>(hidSharedMem));
+                    HideTick();
                 }
                 azl::platform::SleepMs(1);
+            }
+        });
+        // The HID service signals this event after it writes a pad / touch sample: clearing right then leaves the game almost no time to read it.
+        // (The wait clears the event first, so it can never spin; if the event does not come the 1 ms thread above still runs.)
+        g_event_thread.Start([] {
+            while (g_run.load(std::memory_order_acquire)) {
+                hidWaitForEvent(HIDEVENT_PAD0, true);
+                if (g_hide.load(std::memory_order_acquire)) {
+                    HideTick();
+                }
             }
         });
     }
@@ -118,6 +257,7 @@ void Detach() {
     g_hide.store(false, std::memory_order_release);
     g_run.store(false, std::memory_order_release);
     g_scrub_thread.Join();
+    g_event_thread.JoinTimeout(300); // (may be waiting for an event that does not come while the console sleeps: then it is left behind)
 }
 
 } // namespace chat_overlay
@@ -125,6 +265,8 @@ void Detach() {
 #else // AZL_CHAT_OVERLAY
 
 namespace chat_overlay {
+void SetSwitchHandler(SwitchFn) {}
+void SetListReader(ReadListFn) {}
 void Attach(azl::RoomClient&) {}
 void Detach() {}
 } // namespace chat_overlay
