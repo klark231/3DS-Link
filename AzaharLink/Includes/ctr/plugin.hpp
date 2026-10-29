@@ -75,6 +75,11 @@ public:
     /// Joins the configured room (background thread). Returns false if it cannot even start.
     bool Connect();
     void Disconnect();
+    /// The in-game ROOMS list chose a room: the next Tick leaves the room it is in and joins this one (the settings file is not changed:
+    /// the room of AzaharLink.ini is still the one the next launch joins). Callable from any thread.
+    void SwitchRoom(const std::string& host, u16 port, const std::string& password);
+    /// The text of saved room list `list` (servers.txt, servers2.txt ... in the data folder), for the overlay's ROOMS list. False: no such file.
+    bool ReadRoomList(int list, std::string& text);
 
     /// Per-frame bookkeeping: reconnect on lost connections, flush notifications.
     /// `want_connected` is the state requested by the user.
@@ -296,6 +301,11 @@ private:
     std::string startup_issue_;
     u64 last_issue_ms_ = 0;
     u64 last_hint_ms_ = 0;          ///< the last "no room address" reminder (only with the in-game menu off, see Tick)
+    platform::Mutex switch_mutex_;   ///< guards the pending room switch below
+    bool switch_pending_ = false;
+    std::string switch_host_;
+    u16 switch_port_ = 0;
+    std::string switch_password_;
     int last_notified_error_ = -1;  ///< last room error shown on screen: do not repeat the same one
 
     // The room link and the game's session (see azl/link_policy.hpp).

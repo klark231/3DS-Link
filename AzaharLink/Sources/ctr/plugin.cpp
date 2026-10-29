@@ -18,6 +18,7 @@
 #include "azl/ticks.h"
 #include "azl/wallclock.hpp"
 #include "ctr/boot_diag.hpp"
+#include "azl/chat.hpp"
 #include "ctr/chat_overlay.hpp"
 #include "ctr/soc.hpp"
 #include "ctr/teardown.hpp"
@@ -1484,6 +1485,12 @@ void Plugin::EarlyInit() {
     room_->SetWifiPrefilter([this](const u8* message, std::size_t size) { return engine_->TryDiscardEncoded(message, size); });
     room_->SetTickCallback([this](u64 now_ms) { engine_->Tick(now_ms); });
     room_->SetRoomInfoCallback([this](const room::RoomInfo& info) { OnRoomInfo(info); });
+    chat_overlay::SetListReader([](int list, std::string& text) {
+        return Plugin::Get().ReadRoomList(list, text);
+    });
+    chat_overlay::SetSwitchHandler([](const char* host, unsigned short port, const char* password, const char*) {
+        Plugin::Get().SwitchRoom(host, port, password);
+    });
     chat_overlay::Attach(*room_); // (no-op unless built with -DAZL_CHAT_OVERLAY)
     room_->SetStateCallback([this](RoomClient::State state, RoomClient::Error error) {
         Log("room: %s%s%s", RoomClient::StateName(state),
@@ -2225,6 +2232,34 @@ void Plugin::Disconnect() {
     room_->Stop();
 }
 
+bool Plugin::ReadRoomList(int list, std::string& text) {
+    // servers.txt, servers2.txt ... in the data folder: the app's saved rooms (list 1) and the lists the app keeps next to it.
+    const std::string path = std::string(kDataDir) + chat::RoomListFile(list);
+    File file;
+    if (File::Open(file, path, File::READ) != File::SUCCESS) {
+        return false;
+    }
+    const u64 size = file.GetSize();
+    bool ok = false;
+    if (size > 0 && size <= 16384) {
+        text.assign(static_cast<std::size_t>(size), '\0');
+        ok = file.Read(&text[0], static_cast<u32>(size)) >= 0;
+    }
+    file.Close();
+    return ok;
+}
+
+void Plugin::SwitchRoom(const std::string& host, u16 port, const std::string& password) {
+    if (host.empty()) {
+        return;
+    }
+    platform::LockGuard lock(switch_mutex_);
+    switch_host_ = host;
+    switch_port_ = port;
+    switch_password_ = password;
+    switch_pending_ = true;
+}
+
 bool Plugin::Tick(bool want_connected) {
     if (shutting_down_.load()) {
         return true;
@@ -2239,6 +2274,33 @@ bool Plugin::Tick(bool want_connected) {
         Log("menu: 'Connect to room' is now %s", want_connected ? "ON" : "OFF");
     }
     want_connected_ = want_connected;
+    {
+        // A room chosen in the overlay's ROOMS list: leave the current one; the rejoin policy below joins the new one at once.
+        bool switch_now = false;
+        std::string host, password;
+        u16 port = 0;
+        {
+            platform::LockGuard lock(switch_mutex_);
+            if (switch_pending_) {
+                switch_pending_ = false;
+                switch_now = true;
+                host = switch_host_;
+                port = switch_port_;
+                password = switch_password_;
+            }
+        }
+        if (switch_now) {
+            Log("room: switching to %s:%u from the overlay's room list", host.c_str(), static_cast<unsigned>(port));
+            config_.host = host;
+            config_.port = port;
+            config_.password = password;
+            Disconnect();
+            room_->ClearError();
+            last_notified_error_ = -1;
+            rejoin_.ResetBackoff();
+            PostNotification(want_connected ? "Switching room..." : "Room chosen: switch 'Connect to room' on to join it");
+        }
+    }
     if (config_.host.empty() && menu_off() && (last_hint_ms_ == 0 || now - last_hint_ms_ >= kHintIntervalMs)) {
         // With the in-game menu off the address can only come from the settings: say so, now and once a minute,
         // instead of sitting idle (a message at launch is easily missed behind the game's loading screens).

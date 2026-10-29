@@ -24,7 +24,24 @@ jobs:
       
       - run: bash AzaharLink/Tests/policy_check.sh
       
-      - run: bash tools_ctr/build_tools.sh
+      # The compiled objects (ccache) and makerom/ctrtool are kept between runs: only what changed is compiled again.
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.run_id }}
+          restore-keys: ccache-
+
+      - uses: actions/cache@v4
+        id: ctr_tools
+        with:
+          path: |
+            tools_ctr/makerom
+            tools_ctr/ctrtool
+          key: ctr-tools-${{ hashFiles('tools_ctr/build_tools.sh') }}
+
+      - if: steps.ctr_tools.outputs.cache-hit != 'true'
+        run: bash tools_ctr/build_tools.sh
+
       
       - run: bash DlpLink/tools/build_all.sh --dist
       
