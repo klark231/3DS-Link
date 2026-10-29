@@ -24,10 +24,10 @@ constexpr u32 kGoodbyeWaitMs = 120;
 constexpr u32 kMaxReliableBacklog = 65536;
 // ENet's defaults for what one packet / the unprocessed data of a peer may be are 32 MB each, and a
 // failed enet_malloc aborts (callbacks.c). The room sends UDS frames (~1.5 KB at most) and room
-// information (a few KB): 16 KB per packet is generous, and 64 KB of waiting data covers what a
-// full soc ring (256 datagrams of ~416 B) can deliver in one go. (Reduced for Old 3DS memory limits).
-constexpr std::size_t kMaxPacketSize = 16 * 1024;
-constexpr std::size_t kMaxWaitingData = 64 * 1024;
+// information (a few KB): 64 KB per packet is generous, and 192 KB of waiting data is 1.8 x what a
+// full soc ring (256 datagrams of ~416 B) can deliver in one go.
+constexpr std::size_t kMaxPacketSize = 64 * 1024;
+constexpr std::size_t kMaxWaitingData = 192 * 1024;
 
 u32 Ms(u64 v) {
     return v > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<u32>(v);
@@ -219,6 +219,26 @@ void RoomClient::SetStateCallback(std::function<void(State, Error)> cb) {
 void RoomClient::SetRoomInfoCallback(std::function<void(const room::RoomInfo&)> cb) {
     platform::LockGuard lock(mutex_);
     room_info_cb_ = std::move(cb);
+}
+
+void RoomClient::SetChatCallback(std::function<void(const std::string&, const std::string&)> cb) {
+    platform::LockGuard lock(mutex_);
+    chat_cb_ = std::move(cb);
+}
+
+void RoomClient::SendChat(const std::string& message) {
+    if (message.empty() || state() == State::Idle) {
+        return;
+    }
+    TxQueue::Item item;
+    item.bytes = room::EncodeChat(message);
+    const u64 now = platform::NowMs();
+    item.queued_ms = now;
+    TxQueue::Drops drops;
+    platform::LockGuard lock(mutex_);
+    tx_.Push(std::move(item), now, &drops);
+    tx_pending_.store(1, std::memory_order_release);
+    StatsAdd(g_stats.tx_cap_drops, drops.cap);
 }
 
 void RoomClient::UpdateGameInfo(const std::string& name, u64 id) {
@@ -660,6 +680,21 @@ void RoomClient::Run(Config config, u32 generation) {
                         }
                         break;
                     }
+                    case room::IdChatMessage: {
+                        std::string nick;
+                        std::string text;
+                        if (room::DecodeChat(data, size, &nick, &text)) {
+                            std::function<void(const std::string&, const std::string&)> cb;
+                            {
+                                platform::LockGuard lock(mutex_);
+                                cb = chat_cb_;
+                            }
+                            if (cb) {
+                                cb(nick, text);
+                            }
+                        }
+                        break;
+                    }
                     case room::IdJoinSuccess:
                     case room::IdJoinSuccessAsMod: {
                         Mac assigned{};
@@ -709,7 +744,7 @@ void RoomClient::Run(Config config, u32 generation) {
                         keep_running = false;
                         break;
                     default:
-                        break; // chat, status messages, moderation: not needed here
+                        break; // status messages, moderation: not needed here
                     }
                 }
                 enet_packet_destroy(event.packet);

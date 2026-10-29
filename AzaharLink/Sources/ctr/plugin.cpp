@@ -18,6 +18,7 @@
 #include "azl/ticks.h"
 #include "azl/wallclock.hpp"
 #include "ctr/boot_diag.hpp"
+#include "ctr/chat_overlay.hpp"
 #include "ctr/soc.hpp"
 #include "ctr/teardown.hpp"
 
@@ -1483,6 +1484,7 @@ void Plugin::EarlyInit() {
     room_->SetWifiPrefilter([this](const u8* message, std::size_t size) { return engine_->TryDiscardEncoded(message, size); });
     room_->SetTickCallback([this](u64 now_ms) { engine_->Tick(now_ms); });
     room_->SetRoomInfoCallback([this](const room::RoomInfo& info) { OnRoomInfo(info); });
+    chat_overlay::Attach(*room_); // (no-op unless built with -DAZL_CHAT_OVERLAY)
     room_->SetStateCallback([this](RoomClient::State state, RoomClient::Error error) {
         Log("room: %s%s%s", RoomClient::StateName(state),
             error != RoomClient::Error::None ? " - " : "",
@@ -1840,6 +1842,7 @@ void Plugin::OnSleepEnter() {
     if (engine_->StopService(kServiceSleep)) {
         session_dropped_.store(true); // (a session was up)
     }
+    chat_overlay::Detach();
     room_->RequestStop(true); // (the network thread sends what is queued, a Deauthentication among it, and leaves)
 }
 

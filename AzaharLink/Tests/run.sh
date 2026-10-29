@@ -81,6 +81,7 @@ g++ $CXXFLAGS Tests/sleep_crumbs_test.cpp $CORE "$OUT"/enet_*.o -o "$OUT/sleep_c
 g++ $CXXFLAGS Tests/capture_test.cpp $CORE "$OUT"/enet_*.o -o "$OUT/capture_test"
 g++ $CXXFLAGS -ITests/settings_test/shim -IConfigApp/source Tests/settings_test/settings_test.cpp ConfigApp/source/settings.cpp ConfigApp/source/fileio.cpp -o "$OUT/settings_test"
 g++ $CXXFLAGS -IConfigApp/source Tests/settings_test/lobby_json_test.cpp -o "$OUT/lobby_json_test"   # the reader of the public room list (ConfigApp/source/lobby_json.hpp)
+g++ $CXXFLAGS Tests/chat_test.cpp Sources/azl/room_proto.cpp -o "$OUT/chat_test"   # the chat core (Includes/azl/chat.hpp) and its packets
 # TitleShare's own C files (the vendored copies): the app's keyed reading of a game's icon (ncch_icon_test) and its SHA-256 (paths.cpp) use them
 for f in aes sdcrypt sha256 contentpath ncchname; do
   gcc -O1 -g -w -c ConfigApp/titleshare/common/$f.c -o "$OUT/ts_$f.o"
@@ -144,6 +145,7 @@ if [ -z "$BUILD_ONLY" ]; then
   "$OUT/capture_test"
   "$OUT/settings_test"
   "$OUT/lobby_json_test"
+  "$OUT/chat_test"
   "$OUT/games_test"
   "$OUT/paths_test"
   "$OUT/plugin_install_test"

@@ -84,7 +84,9 @@ echo "== versione di 3DS Link per questo giro: $(python AzaharLink/Tests/set_ver
 if [ "$PLUGIN" = 1 ]; then
   echo "== 0. il plugin (da zero: il Makefile del plugin non sempre ricollega l'ELF)"
   rm -rf AzaharLink/AzaharLink.elf AzaharLink/AzaharLink.3gx AzaharLink/Build
-  MSYS_NO_PATHCONV=1 docker run --rm -v "$(cd AzaharLink && pwd -W 2>/dev/null || pwd):/src" -w /src pablomk7/libctrpf:0.8.0 make 2>&1 | grep -E "warning|error|Error|built|3gx" | tail -8 || true
+  # CHAT must be handed to the container (-e): the Makefile reads it to add -DAZL_CHAT_OVERLAY, and a plain `docker run` does not inherit the host's environment
+  echo "   CHAT=${CHAT:-0} (1 = the in-game chat overlay is compiled in)"
+  MSYS_NO_PATHCONV=1 docker run --rm -e CHAT="${CHAT:-0}" -v "$(cd AzaharLink && pwd -W 2>/dev/null || pwd):/src" -w /src pablomk7/libctrpf:0.8.0 make 2>&1 | grep -E "warning|error|Error|built|3gx" | tail -8 || true
   test -s AzaharLink/AzaharLink.3gx
 fi
 
