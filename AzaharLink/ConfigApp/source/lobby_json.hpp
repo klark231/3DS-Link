@@ -419,4 +419,49 @@ inline bool Parse(const std::string& json, std::vector<Room>& out, std::string* 
     return found;
 }
 
+// Generates the public room list for the plugin menu (public_rooms.txt).
+// Format: host:port|<players>/<max> <name>|?
+// Note: Plugin does no HTTP in-game, so the app writes this after refreshing.
+// Filters out inactive rooms and invalid hostnames.
+inline std::string PublicRoomsText(const std::vector<Room>& rooms, std::size_t max_rooms = 300) {
+    std::string out;
+    std::size_t lines = 0;
+    for (const Room& r : rooms) {
+        if (lines >= max_rooms) {
+            break;
+        }
+        if (!r.active || r.address.empty() || r.address.size() > 100 || r.port == 0 || r.port > 65535) {
+            continue;
+        }
+        bool host_ok = true;
+        for (unsigned char c : r.address) {
+            host_ok = host_ok && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '-' || c == '_');
+        }
+        if (!host_ok) {
+            continue;
+        }
+        std::string name;
+        for (unsigned char c : r.name) {
+            if (c >= 32 && c < 127 && c != '|') {
+                name += static_cast<char>(c);
+            } else if (c == '|' || c < 32) {
+                name += ' ';
+            } else if (c >= 0xC0) {
+                name += '?'; // (a letter outside ASCII, whatever its length in UTF-8: the game's font cannot draw it, but the name keeps its length)
+            }
+        }
+        std::string label = std::to_string(r.players) + "/" + std::to_string(r.max_players) + " " + name;
+        if (label.size() > 100) {
+            label.resize(100); // (the plugin keeps 100 characters of a name: a lobby name is at most 20-60)
+        }
+        out += r.address + ":" + std::to_string(r.port) + "|" + label;
+        if (r.has_password) {
+            out += "|?";
+        }
+        out += "\n";
+        ++lines;
+    }
+    return out;
+}
+
 } // namespace lobby

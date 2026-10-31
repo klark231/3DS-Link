@@ -25,6 +25,10 @@ CFLAGS		:=	$(ARCH) -Os -mword-relocations \
 				-fomit-frame-pointer -ffunction-sections -fno-strict-aliasing
 
 CFLAGS		+=	$(INCLUDE) -D__3DS__ -DAZL_USE_CTRPF -Wall -Wno-psabi
+# In-game chat overlay (Sources/ctr/chat_overlay.cpp): make CHAT=1. Off by default until it has been built against the framework and tried on a console.
+ifeq ($(CHAT),1)
+CFLAGS		+=	-DAZL_CHAT_OVERLAY
+endif
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
 
