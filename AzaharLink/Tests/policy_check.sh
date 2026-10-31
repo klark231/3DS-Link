@@ -617,8 +617,8 @@ need Sources/azl/log_files.cpp "if (crumb_file_ || g_debug_level <= 0) {" "the t
 # (the capture, the main log, and the trail's file: opened and, for the trail, reopened after the old one is removed)
 [ "$(grep -c 'OpenAppend(' Sources/azl/log_files.cpp)" = "4" ] || fail "Sources/azl/log_files.cpp opens a file in a place that is not behind the level check"
 # (and the one READ of a saved room list for the overlay's ROOMS picker, ReadRoomList: it only reads, and only when the picker is open)
-[ "$(tr -d '\r' < Sources/ctr/plugin.cpp | grep -o 'File::Open(' | wc -l)" = "6" ] || fail "Sources/ctr/plugin.cpp opens a file besides the log layer, the ini read, the ini write, the memory record (read and write) and the saved room list read"
-need Sources/ctr/plugin.cpp "if (File::Open(file, path, File::READ) != File::SUCCESS) {" "the saved room list is only ever opened for reading"
+[ "$(tr -d '\r' < Sources/ctr/plugin.cpp | grep -o 'File::Open(' | wc -l)" = "7" ] || fail "Sources/ctr/plugin.cpp opens a file besides the log layer, the ini read, the ini write, the memory record (read and write), the small data-file read (room lists, chat position) and the chat position write"
+need Sources/ctr/plugin.cpp "if (File::Open(file, path, File::READ) != File::SUCCESS) {" "the data-file reader (room lists, chat position) only ever opens for reading"
 need_after Sources/ctr/plugin.cpp "void Plugin::CompareMemoryWithLastLaunch() {" "if (g_debug_level <= 0) {" "the memory record is read and written with the log on only (debug=0 leaves the card alone)"
 need Sources/ctr/plugin.cpp "mem against the last launch of this title:" "two launches of a title are compared (2026-10-20: the proof that an exit leaves nothing)"
 need Sources/ctr/plugin.cpp "    CompareMemoryWithLastLaunch();" "... at the start, after the memory line"

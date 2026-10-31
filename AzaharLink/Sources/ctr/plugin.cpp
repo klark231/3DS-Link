@@ -1485,12 +1485,12 @@ void Plugin::EarlyInit() {
     room_->SetWifiPrefilter([this](const u8* message, std::size_t size) { return engine_->TryDiscardEncoded(message, size); });
     room_->SetTickCallback([this](u64 now_ms) { engine_->Tick(now_ms); });
     room_->SetRoomInfoCallback([this](const room::RoomInfo& info) { OnRoomInfo(info); });
-    chat_overlay::SetListReader([](int list, std::string& text) {
-        return Plugin::Get().ReadRoomList(list, text);
-    });
-    chat_overlay::SetSwitchHandler([](const char* host, unsigned short port, const char* password, const char*) {
-        Plugin::Get().SwitchRoom(host, port, password);
-    });
+    {
+        int lines = 0, button = 0;
+        LoadChatPositions(lines, button);
+        chat_overlay::SetPosition(lines);
+        chat_overlay::SetButtonPosition(button);
+    }
     chat_overlay::Attach(*room_); // (no-op unless built with -DAZL_CHAT_OVERLAY)
     room_->SetStateCallback([this](RoomClient::State state, RoomClient::Error error) {
         Log("room: %s%s%s", RoomClient::StateName(state),
@@ -2232,21 +2232,69 @@ void Plugin::Disconnect() {
     room_->Stop();
 }
 
-bool Plugin::ReadRoomList(int list, std::string& text) {
-    // servers.txt, servers2.txt ... in the data folder: the app's saved rooms (list 1) and the lists the app keeps next to it.
-    const std::string path = std::string(kDataDir) + chat::RoomListFile(list);
+/// A small text file of the data folder, read whole (at most 16 KB, 64 KB for the public rooms). The only reader: room lists and the chat position.
+static bool ReadDataText(const std::string& name, std::string& text, u64 max_size = 16384) {
+    const std::string path = std::string(kDataDir) + name;
     File file;
     if (File::Open(file, path, File::READ) != File::SUCCESS) {
         return false;
     }
     const u64 size = file.GetSize();
     bool ok = false;
-    if (size > 0 && size <= 16384) {
+    if (size > 0 && size <= max_size) {
         text.assign(static_cast<std::size_t>(size), '\0');
         ok = file.Read(&text[0], static_cast<u32>(size)) >= 0;
     }
     file.Close();
     return ok;
+}
+
+bool Plugin::ReadRoomList(int list, std::string& text) {
+    // list 0: the public rooms the Setup app saved from the lobby (public_rooms.txt). 1.. : servers.txt, servers2.txt ... (the app's saved rooms).
+    return ReadDataText(list <= 0 ? chat::PublicRoomsFile() : chat::RoomListFile(list), text, list <= 0 ? 65536 : 16384);
+}
+
+void Plugin::LoadChatPositions(int& lines, int& button) {
+    std::string text;
+    if (!ReadDataText("chat_pos.txt", text)) {
+        text.clear();
+    }
+    chat::ParseChatPositions(text, lines, button);
+}
+
+/// A small text file of the data folder, written whole (the only writer besides the ini: the chat places and the last room).
+static bool WriteDataText(const std::string& name, const std::string& text) {
+    const std::string target = std::string(kDataDir) + name;
+    File file;
+    MakeDataDir();
+    if (File::Open(file, target, File::RWC | File::TRUNCATE | File::SYNC) != File::SUCCESS) {
+        return false;
+    }
+    return file.Write(text.data(), static_cast<u32>(text.size())) == File::SUCCESS;
+}
+
+bool Plugin::LoadLastRoom(std::string& host, u16& port) {
+    // The last room chosen in the menu's browser; before the first one, the room of the settings (the one the game joined).
+    std::string text;
+    chat::RoomEntry e;
+    if (ReadDataText("last_room.txt", text) && chat::ParseRoomLine(text.substr(0, text.find('\n')), e)) {
+        host = e.host;
+        port = e.port;
+        return true;
+    }
+    host = config_.host;
+    port = config_.port;
+    return !host.empty();
+}
+
+bool Plugin::SaveLastRoom(const std::string& host, u16 port) {
+    return WriteDataText("last_room.txt", host + ":" + std::to_string(port) + "\n");
+}
+
+bool Plugin::SaveChatPositions(int lines, int button) {
+    const auto ok = [](int p, int def) { return p >= 0 && p < chat::kChatPositions ? p : def; };
+    const std::string text = std::to_string(ok(lines, 0)) + " " + std::to_string(ok(button, chat::kDefaultButtonPosition)) + "\n";
+    return WriteDataText("chat_pos.txt", text);
 }
 
 void Plugin::SwitchRoom(const std::string& host, u16 port, const std::string& password) {
@@ -2275,7 +2323,7 @@ bool Plugin::Tick(bool want_connected) {
     }
     want_connected_ = want_connected;
     {
-        // A room chosen in the overlay's ROOMS list: leave the current one; the rejoin policy below joins the new one at once.
+        // A room chosen in the menu's room browser: leave the current one; the rejoin policy below joins the new one at once.
         bool switch_now = false;
         std::string host, password;
         u16 port = 0;

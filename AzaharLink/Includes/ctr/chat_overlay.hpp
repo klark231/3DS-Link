@@ -1,9 +1,8 @@
-// In-game chat overlay (CTRPF): incoming lines on the top screen, a CHAT button on the bottom screen that opens a touch keyboard drawn over
-// the game, and a ROOMS button that opens a list of saved rooms (servers.txt, servers2.txt ... in /3ds/3DSLink) to switch to. The game is never paused: the framework calls our drawing function once per frame, and the touch is read from the same
-// shared page the game uses. Built only with -DAZL_CHAT_OVERLAY (see Sources/ctr/chat_overlay.cpp); without it Attach/Detach do nothing.
+// In-game chat overlay (CTRPF): incoming lines on the top screen (in the corner / edge position chosen in the plugin menu) and a CHAT button
+// on the bottom screen that opens a touch keyboard drawn over the game. The game is never paused: the framework calls our drawing function
+// once per frame, and the touch is read from the same shared page the game uses. Built only with -DAZL_CHAT_OVERLAY (see
+// Sources/ctr/chat_overlay.cpp); without it Attach/Detach do nothing and Enabled() is false.
 #pragma once
-
-#include <string>
 
 namespace azl {
 class RoomClient;
@@ -11,14 +10,15 @@ class RoomClient;
 
 namespace chat_overlay {
 
-/// What the ROOMS picker calls when a room is chosen (a plain function: no allocation). The strings are valid only during the call.
-using SwitchFn = void (*)(const char* host, unsigned short port, const char* password, const char* name);
-/// Call once, before Attach. Without a handler a tap on a room only shows "Joining ..." in the chat lines.
-void SetSwitchHandler(SwitchFn fn);
+/// True when the overlay is compiled in (the menu offers the position switch only then).
+bool Enabled();
 
-/// What the picker calls to get the text of room list `list` (1..azl::chat::kRoomLists); false when there is no such file.
-using ReadListFn = bool (*)(int list, std::string& text);
-void SetListReader(ReadListFn fn);
+/// Where the chat lines go on the top screen: azl::chat::kChatPositions values (0 top-left ... 5 bottom-right). Safe to call at any time.
+void SetPosition(int position);
+int Position();
+/// Where the small Chat button is on the bottom screen (0..5, the same six places): choose an empty spot of the game's touch screen.
+void SetButtonPosition(int position);
+int ButtonPosition();
 
 /// Starts showing the chat of `room` and lets the keyboard send into it. Call after the room client exists, before Start().
 void Attach(azl::RoomClient& room);

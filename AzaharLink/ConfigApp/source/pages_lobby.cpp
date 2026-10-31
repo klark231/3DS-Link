@@ -7,9 +7,11 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <sys/stat.h>
 
 #include "lobby_fetch.hpp"
 #include "lobby_json.hpp"
+#include "paths.hpp"
 #include "pages.hpp"
 
 using namespace ui;
@@ -41,6 +43,18 @@ bool SaveLobbyUrl(const std::string& url) {
     }
     const bool ok = std::fwrite(url.data(), 1, url.size(), f) == url.size();
     return std::fclose(f) == 0 && ok;
+}
+
+// The list for the plugin's menu in the game (public_rooms.txt next to AzaharLink.ini: the plugin's folder is fixed, the app's may not be).
+// A failure is silent: the page works without it.
+void SavePublicRooms(const std::vector<lobby::Room>& rooms) {
+    const std::string text = lobby::PublicRoomsText(rooms);
+    const std::string dir = setup::kPluginDataDir;
+    mkdir(dir.c_str(), 0777);
+    if (FILE* f = std::fopen((dir + "/public_rooms.txt").c_str(), "wb")) {
+        std::fwrite(text.data(), 1, text.size(), f);
+        std::fclose(f);
+    }
 }
 
 bool HasNoCase(const std::string& text, const char* word) {
@@ -275,6 +289,7 @@ private:
                 // the rooms with people first (a stable sort keeps the server's order inside each group)
                 std::stable_sort(rooms_.begin(), rooms_.end(), [](const lobby::Room& a, const lobby::Room& b) { return a.players > b.players; });
                 state_ = State::Ready;
+                SavePublicRooms(rooms_);
             } else {
                 error_ = why;
                 state_ = State::Failed;

@@ -24,11 +24,8 @@ using namespace CTRPluginFramework;
 
 azl::chat::Log g_log;
 azl::chat::Keyboard g_keyboard;
-azl::chat::RoomPicker g_picker;
-SwitchFn g_switch = nullptr;
-ReadListFn g_read_list = nullptr;
-bool g_swallow = false;                 // a touch that closed the picker goes on until released: the keyboard must not see it (Close sits where CHAT is)
-bool g_list_loaded = false;
+std::atomic<int> g_position{0};
+std::atomic<int> g_button{azl::chat::kDefaultButtonPosition}; // where the Chat button is (plugin menu switch)         // where the chat lines go on the top screen (plugin menu switch)
 azl::chat::TouchScrubber g_scrub;       // learns where the live touch sits in the HID shared page, and clears it there
 std::atomic<bool> g_hide{false};        // true while the keyboard is open (or the CHAT button is being pressed): the game must not see the touch
 std::atomic<bool> g_run{false};
@@ -68,59 +65,21 @@ void HideTick() {
     g_scrub.Scrub(page);
 }
 
-// The rooms of list `n` (servers.txt, servers2.txt ...): the plugin reads the file (files are touched only by plugin.cpp), only the parsed rooms are kept.
-void LoadList(int n) {
-    std::vector<azl::chat::RoomEntry> rooms;
-    std::string text;
-    if (g_read_list && g_read_list(n, text)) {
-        rooms = azl::chat::ParseRoomList(text);
-    }
-    g_picker.SetRooms(std::move(rooms));
-    g_list_loaded = true;
-}
-
-void DrawPicker(const Screen& screen) {
-    const Color bg(15, 16, 20);
-    screen.DrawRect(0, 0, 320, 240, bg, true);
-    screen.Draw("Rooms", kMargin, 8, Color::White, bg);
-    DrawKey(screen, azl::chat::kPickClose, false, false);
-    const std::vector<azl::chat::RoomEntry>& rooms = g_picker.rooms();
-    if (rooms.empty()) {
-        const std::string file = azl::chat::RoomListFile(g_picker.list());
-        screen.Draw("No rooms in " + file, kMargin, azl::chat::kRowsY + 8, Color(200, 200, 210), bg);
-    }
-    for (std::size_t r = 0; r < azl::chat::kRoomRows; ++r) {
-        const std::size_t i = g_picker.first() + r;
-        if (i >= rooms.size()) {
-            break;
-        }
-        const int y = azl::chat::kRowsY + static_cast<int>(r) * azl::chat::kRowH;
-        const Color face(40, 42, 50);
-        screen.DrawRect(0, y, 319, azl::chat::kRowH - 2, face, true);
-        screen.Draw(azl::chat::RoomLabel(rooms[i]), kMargin, y + 7, Color::White, face);
-    }
-    DrawKey(screen, azl::chat::kPickUp, false, false);
-    DrawKey(screen, azl::chat::kPickDown, false, false);
-    screen.DrawRect(azl::chat::kPickList.x, azl::chat::kPickList.y, azl::chat::kPickList.w - 1, azl::chat::kPickList.h - 1, Color(40, 42, 50), true);
-    const std::string list = "List " + std::to_string(g_picker.list()) + " / " + std::to_string(azl::chat::kRoomLists) + "  (" +
-                             azl::chat::RoomListFile(g_picker.list()) + ")";
-    screen.Draw(list, azl::chat::kPickList.x + 6, azl::chat::kPickList.y + 7, Color::White, Color(40, 42, 50));
-    screen.Draw("Leave the game's lobby first:", kMargin, 190, Color(230, 200, 120), bg);
-    screen.Draw("switching drops the game's link.", kMargin, 202, Color(230, 200, 120), bg);
-    screen.Draw("Tap a room to join it.", kMargin, 220, Color(200, 200, 210), bg);
-}
-
 // Called by the framework once per frame for each screen (the top one, the bottom one).
 bool Frame(const Screen& screen) {
     const u64 now = azl::platform::NowMs();
     if (screen.IsTop) {
         azl::chat::Log::Line lines[azl::chat::kLines];
         const std::size_t n = g_log.Visible(now, lines);
+        const int position = g_position.load(std::memory_order_relaxed);
         for (std::size_t i = 0; i < n; ++i) {
-            screen.Draw(lines[i].text, kMargin, kMargin + static_cast<int>(i) * 12, Color::White, Color(0, 0, 0));
+            int x = 0, y = 0;
+            azl::chat::ChatLineXY(position, static_cast<int>(lines[i].text.size()) * azl::chat::kCharWidth, static_cast<int>(i), static_cast<int>(n), x, y);
+            screen.Draw(lines[i].text, x, y, Color::White, Color(0, 0, 0));
         }
         return true;
     }
+    g_keyboard.SetButtonPosition(g_button.load(std::memory_order_relaxed));
     // bottom screen: the touch is read once per frame (here, where the bottom screen is drawn)
     const bool api_down = Touch::IsDown();
     UIntVector pos = api_down ? Touch::GetPosition() : UIntVector(0, 0);
@@ -139,33 +98,7 @@ bool Frame(const Screen& screen) {
         }
     }
     const int tx = static_cast<int>(pos.x), ty = static_cast<int>(pos.y);
-    // the picker gets the touch unless the keyboard is open; the keyboard gets it unless the picker is open (or has just closed on this touch)
-    azl::chat::RoomPicker::Event pick = azl::chat::RoomPicker::Event::None;
-    if (!g_keyboard.is_open()) {
-        const bool was_open = g_picker.is_open();
-        pick = g_picker.OnTouch(down, tx, ty);
-        if (pick == azl::chat::RoomPicker::Event::Opened && !g_list_loaded) {
-            LoadList(g_picker.list());
-        } else if (pick == azl::chat::RoomPicker::Event::ChangeList) {
-            LoadList(g_picker.list());
-        } else if (pick == azl::chat::RoomPicker::Event::Pick && g_picker.has_picked()) {
-            const azl::chat::RoomEntry room = g_picker.picked();
-            g_log.Push("sys", "Joining " + azl::chat::RoomLabel(room), now);
-            if (g_switch) {
-                g_switch(room.host.c_str(), room.port, room.password.c_str(), room.name.c_str());
-            }
-        }
-        if (was_open && !g_picker.is_open()) {
-            g_swallow = true;
-        }
-    } else {
-        g_picker.OnTouch(false, 0, 0);
-    }
-    if (!down) {
-        g_swallow = false;
-    }
-    const bool picker_open = g_picker.is_open();
-    const auto event = g_keyboard.OnTouch(down && !picker_open && !g_swallow, tx, ty, now);
+    const auto event = g_keyboard.OnTouch(down, tx, ty, now);
     if (event == azl::chat::Keyboard::Event::Send) {
         const std::string message = g_keyboard.TakeMessage();
         azl::RoomClient* room = g_room.load(std::memory_order_acquire);
@@ -177,8 +110,8 @@ bool Frame(const Screen& screen) {
     const auto inside = [&](const azl::chat::Key& k) {
         return down && tx >= k.x && tx < k.x + k.w && ty >= k.y && ty < k.y + k.h;
     };
-    // The game's touchscreen is off while the keyboard or the room list is open, and for as long as a touch that began on the overlay lasts.
-    const bool want_hide = g_keyboard.is_open() || picker_open || g_swallow || inside(azl::chat::kChatButton) || inside(azl::chat::kRoomsButton);
+    // The game's touchscreen is off while the keyboard is open, and for as long as a touch that began on the overlay lasts.
+    const bool want_hide = g_keyboard.is_open() || inside(g_keyboard.button());
     if (want_hide) {
         g_hiding = true;
     } else if (!down) {
@@ -188,13 +121,8 @@ bool Frame(const Screen& screen) {
     if (g_hiding) {
         HideTick(); // (and the threads do it between frames)
     }
-    if (picker_open) {
-        DrawPicker(screen);
-        return true;
-    }
     if (!g_keyboard.is_open()) {
-        DrawKey(screen, azl::chat::kRoomsButton, false, false);
-        DrawKey(screen, azl::chat::kChatButton, false, false);
+        DrawKey(screen, g_keyboard.button(), false, false);
         return true;
     }
     screen.DrawRect(0, azl::chat::kTextBarY, 320, 240 - azl::chat::kTextBarY, Color(15, 16, 20), true);
@@ -209,12 +137,25 @@ bool Frame(const Screen& screen) {
 
 } // namespace
 
-void SetSwitchHandler(SwitchFn fn) {
-    g_switch = fn;
+bool Enabled() {
+    return true;
 }
 
-void SetListReader(ReadListFn fn) {
-    g_read_list = fn;
+void SetPosition(int position) {
+    g_position.store(position >= 0 && position < azl::chat::kChatPositions ? position : 0, std::memory_order_relaxed);
+}
+
+int Position() {
+    return g_position.load(std::memory_order_relaxed);
+}
+
+void SetButtonPosition(int position) {
+    const int p = position >= 0 && position < azl::chat::kChatPositions ? position : azl::chat::kDefaultButtonPosition;
+    g_button.store(p, std::memory_order_relaxed);
+}
+
+int ButtonPosition() {
+    return g_button.load(std::memory_order_relaxed);
 }
 
 void Attach(azl::RoomClient& room) {
@@ -265,8 +206,17 @@ void Detach() {
 #else // AZL_CHAT_OVERLAY
 
 namespace chat_overlay {
-void SetSwitchHandler(SwitchFn) {}
-void SetListReader(ReadListFn) {}
+bool Enabled() {
+    return false;
+}
+void SetPosition(int) {}
+int Position() {
+    return 0;
+}
+void SetButtonPosition(int) {}
+int ButtonPosition() {
+    return 2;
+}
 void Attach(azl::RoomClient&) {}
 void Detach() {}
 } // namespace chat_overlay

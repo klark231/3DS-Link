@@ -11,8 +11,8 @@
 
 namespace azl::chat {
 
-constexpr std::size_t kLines = 4;          ///< lines of incoming chat shown at once
-constexpr std::size_t kLineChars = 52;     ///< characters of one shown line (the top screen is 400 px, the font 6 px: 66 fit; the rest is margin)
+constexpr std::size_t kLines = 8;          ///< lines of incoming chat shown at once (a long message takes several)
+constexpr std::size_t kLineChars = 60;     ///< characters of one shown line (the top screen is 400 px, the font 6 px: 66 fit; the rest is margin)
 constexpr std::uint64_t kShowMs = 9000;    ///< how long a line stays on the screen
 constexpr std::size_t kTypedChars = 100;   ///< what one can type (the room relays up to 500)
 
@@ -55,16 +55,36 @@ public:
         if (m.empty()) {
             return;
         }
-        std::string line = (n.empty() ? std::string("?") : n) + ": " + m;
-        if (line.size() > kLineChars) {
-            line.resize(kLineChars - 2);
-            line += "..";
-        }
+        const std::vector<std::string> parts = Wrap((n.empty() ? std::string("?") : n) + ": " + m);
         Lock();
-        lines_[next_ % kLines].text = std::move(line);
-        lines_[next_ % kLines].at_ms = now_ms ? now_ms : 1;
-        ++next_;
+        for (const std::string& part : parts) {
+            lines_[next_ % kLines].text = part;
+            lines_[next_ % kLines].at_ms = now_ms ? now_ms : 1;
+            ++next_;
+        }
         Unlock();
+    }
+
+    /// A message longer than a line goes on over several (cut at a space when there is one; the next lines start with two spaces).
+    static std::vector<std::string> Wrap(std::string line) {
+        std::vector<std::string> parts;
+        while (!line.empty() && parts.size() < kLines) {
+            const std::size_t width = parts.empty() ? kLineChars : kLineChars - 2;
+            std::size_t take = line.size();
+            if (take > width) {
+                take = width;
+                const std::size_t space = line.rfind(' ', width);
+                if (space != std::string::npos && space > width / 3) {
+                    take = space;
+                }
+            }
+            parts.push_back((parts.empty() ? "" : "  ") + line.substr(0, take));
+            line.erase(0, take);
+            while (!line.empty() && line[0] == ' ') {
+                line.erase(0, 1);
+            }
+        }
+        return parts;
     }
 
     /// The lines still to be shown, oldest first. Returns how many were written to `out` (room for kLines).
@@ -108,8 +128,17 @@ constexpr int kTextBarY = 96;   ///< the line that shows what is typed (the keys
 constexpr int kKeysY = 120;
 constexpr int kKeyH = 24;
 
-/// The button that opens the keyboard (corner of the bottom screen, drawn while the keyboard is closed).
-constexpr Key kChatButton = {262, 2, 56, 18, 0, 0, Key::Char, "CHAT"};
+/// The button that opens the keyboard: small, drawn while the keyboard is closed, in one of six places of the bottom screen (0 top-left, 1 top-middle,
+/// 2 top-right, 3 bottom-left, 4 bottom-middle, 5 bottom-right: the same order as the chat lines), so it can sit where the game has nothing to touch.
+constexpr int kButtonW = 32;
+constexpr int kButtonH = 16;
+constexpr int kDefaultButtonPosition = 2;
+inline Key ChatButtonKey(int position) {
+    const int col = (position >= 0 && position < 6) ? position % 3 : 2;
+    const bool bottom = position >= 3 && position < 6;
+    const int x = col == 0 ? 2 : (col == 1 ? (320 - kButtonW) / 2 : 320 - 2 - kButtonW);
+    return Key{x, bottom ? 240 - 2 - kButtonH : 2, kButtonW, kButtonH, 0, 0, Key::Char, "Chat"};
+}
 
 inline const Key* Keys(std::size_t* count) {
     static const Key keys[] = {
@@ -162,10 +191,10 @@ public:
             held_ = nullptr;
         }
         if (!open_) {
-            if (pressed && Inside(kChatButton, x, y)) {
+            if (pressed && Inside(button_, x, y)) {
                 open_ = true;
                 shift_ = false;
-                held_ = &kChatButton;
+                held_ = &button_;
                 return Event::Opened;
             }
             return Event::None;
@@ -185,6 +214,13 @@ public:
 
     bool is_open() const {
         return open_;
+    }
+    /// Where the button that opens the keyboard is (0..5, see ChatButtonKey).
+    void SetButtonPosition(int position) {
+        button_ = ChatButtonKey(position);
+    }
+    const Key& button() const {
+        return button_;
     }
     bool shift() const {
         return shift_;
@@ -257,6 +293,7 @@ private:
     bool open_ = false;
     bool shift_ = false;
     bool was_down_ = false;
+    Key button_ = ChatButtonKey(kDefaultButtonPosition);
     const Key* held_ = nullptr;
     std::uint64_t repeat_at_ = 0;
     std::string text_;
@@ -361,13 +398,14 @@ private:
 };
 
 // ---------------------------------------------------------------------------------------------
-// Switching rooms from the overlay: the saved room lists and the picker (no console needed to test them)
+// Room lists for the plugin menu: the saved lists, the public list, their pages (no console needed to test them)
 // ---------------------------------------------------------------------------------------------
 
 constexpr int kRoomLists = 10;             ///< servers.txt (list 1), servers2.txt ... servers10.txt
 constexpr std::size_t kRoomsPerList = 50;  ///< rooms read from one list file (the app writes 10; a hand-made file may hold more)
-constexpr std::size_t kRoomRows = 5;       ///< rooms shown at once
+constexpr std::size_t kRoomRows = 5;       ///< rooms on one page of the menu
 constexpr std::uint16_t kDefaultRoomPort = 24872;
+constexpr std::size_t kRoomNameChars = 100; ///< characters of a room name that are kept (the whole name of any lobby room; the old limit of 12 cut it)
 
 struct RoomEntry {
     std::string name;     ///< may be empty
@@ -401,7 +439,7 @@ inline bool ParseRoomLine(const std::string& raw, RoomEntry& out) {
     RoomEntry e;
     if (bar1 != std::string::npos) {
         const std::size_t bar2 = line.find('|', bar1 + 1);
-        e.name = Clean(line.substr(bar1 + 1, bar2 == std::string::npos ? std::string::npos : bar2 - bar1 - 1), 12);
+        e.name = Clean(line.substr(bar1 + 1, bar2 == std::string::npos ? std::string::npos : bar2 - bar1 - 1), kRoomNameChars);
         if (bar2 != std::string::npos) {
             e.password = line.substr(bar2 + 1);
             if (e.password.size() > 64) {
@@ -461,113 +499,103 @@ inline std::vector<RoomEntry> ParseRoomList(const std::string& text, std::size_t
     return rooms;
 }
 
+/// Puts the room `host`:`port` (the last one visited) first in `rooms`, keeping the order of the others. False when it is not in the list.
+inline bool MoveRoomFirst(std::vector<RoomEntry>& rooms, const std::string& host, std::uint16_t port) {
+    const auto same = [](const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const char x = (a[i] >= 'A' && a[i] <= 'Z') ? static_cast<char>(a[i] + 32) : a[i];
+            const char y = (b[i] >= 'A' && b[i] <= 'Z') ? static_cast<char>(b[i] + 32) : b[i];
+            if (x != y) {
+                return false;
+            }
+        }
+        return true;
+    };
+    for (std::size_t i = 0; i < rooms.size(); ++i) {
+        if (rooms[i].port == port && same(rooms[i].host, host)) {
+            const RoomEntry found = rooms[i];
+            rooms.erase(rooms.begin() + static_cast<std::ptrdiff_t>(i));
+            rooms.insert(rooms.begin(), found);
+            return true;
+        }
+    }
+    return false;
+}
+
 /// What a row shows: the name, else host:port (the port left out when it is the default).
 inline std::string RoomLabel(const RoomEntry& e) {
     std::string text = e.host;
     if (e.port != kDefaultRoomPort) {
         text += ":" + std::to_string(e.port);
     }
-    return Clean(e.name, 12).empty() ? text : Clean(e.name, 12) + "  " + text;
+    return Clean(e.name, kRoomNameChars).empty() ? text : Clean(e.name, kRoomNameChars) + "  " + text;
 }
 
-/// The button that opens the picker (left of CHAT).
-constexpr Key kRoomsButton = {204, 2, 56, 18, 0, 0, Key::Char, "ROOMS"};
-/// The picker (bottom screen): a header with Close, kRoomRows rows, then Up / Down / List.
-constexpr Key kPickClose = {262, 2, 56, 18, 0, 0, Key::Close, "Close"};
-constexpr int kRowsY = 26;
-constexpr int kRowH = 24;
-constexpr Key kPickUp = {4, 154, 60, 24, 0, 0, Key::Char, "Up"};
-constexpr Key kPickDown = {68, 154, 60, 24, 0, 0, Key::Char, "Down"};
-constexpr Key kPickList = {132, 154, 184, 24, 0, 0, Key::Char, nullptr}; // "List n/5": the label is drawn with the number
+/// The public rooms the Setup app saves from the lobby (the same line format as a list: "host:port|name"; the password field is
+/// kAskPassword when the room has one, so the menu asks for it). The plugin never fetches the lobby itself (no HTTP in the game's process).
+inline std::string PublicRoomsFile() {
+    return "public_rooms.txt";
+}
+constexpr const char* kAskPassword = "?";
+constexpr std::size_t kPublicRooms = 300; ///< rooms read from the public list (the most lobby::Parse keeps)
 
-/// The room picker as a state machine: feed it the touch once per frame. The overlay owns the list (SetRooms) and loads the file
-/// of the list the picker asks for (Event::ChangeList). A tap acts on the press.
-class RoomPicker {
-public:
-    enum class Event { None, Opened, Closed, Pick, ChangeList };
+/// Pages of `per` rooms for the plugin menu: how many pages `total` rooms make (at least 1) and the first room of page `page`.
+inline std::size_t PageCount(std::size_t total, std::size_t per = kRoomRows) {
+    return total == 0 ? 1 : (total + per - 1) / per;
+}
+inline std::size_t PageFirst(std::size_t page, std::size_t per = kRoomRows) {
+    return page * per;
+}
 
-    Event OnTouch(bool down, int x, int y) {
-        const bool pressed = down && !was_down_;
-        was_down_ = down;
-        if (!pressed) {
-            return Event::None;
-        }
-        if (!open_) {
-            if (Inside(kRoomsButton, x, y)) {
-                open_ = true;
-                return Event::Opened;
-            }
-            return Event::None;
-        }
-        if (Inside(kPickClose, x, y)) {
-            open_ = false;
-            return Event::Closed;
-        }
-        if (Inside(kPickUp, x, y)) {
-            if (first_ >= kRoomRows) {
-                first_ -= kRoomRows;
-            } else {
-                first_ = 0;
-            }
-            return Event::None;
-        }
-        if (Inside(kPickDown, x, y)) {
-            if (first_ + kRoomRows < rooms_.size()) {
-                first_ += kRoomRows;
-            }
-            return Event::None;
-        }
-        if (Inside(kPickList, x, y)) {
-            list_ = list_ % kRoomLists + 1;
-            first_ = 0;
-            rooms_.clear();
-            return Event::ChangeList;
-        }
-        if (y >= kRowsY && y < kRowsY + static_cast<int>(kRoomRows) * kRowH) {
-            const std::size_t i = first_ + static_cast<std::size_t>((y - kRowsY) / kRowH);
-            if (i < rooms_.size()) {
-                picked_ = i;
-                open_ = false;
-                return Event::Pick;
-            }
-        }
-        return Event::None;
-    }
+// ---------------------------------------------------------------------------------------------
+// Where the chat lines are drawn on the top screen (a switch in the plugin menu)
+// ---------------------------------------------------------------------------------------------
 
-    void SetRooms(std::vector<RoomEntry> rooms) {
-        rooms_ = std::move(rooms);
-        first_ = 0;
-    }
-    const RoomEntry& picked() const {
-        return rooms_[picked_ < rooms_.size() ? picked_ : 0];
-    }
-    bool has_picked() const {
-        return picked_ < rooms_.size();
-    }
-    bool is_open() const {
-        return open_;
-    }
-    int list() const {
-        return list_;
-    }
-    std::size_t first() const {
-        return first_;
-    }
-    const std::vector<RoomEntry>& rooms() const {
-        return rooms_;
-    }
+constexpr int kChatPositions = 6;   ///< 0 top-left, 1 top-middle, 2 top-right, 3 bottom-left, 4 bottom-middle, 5 bottom-right
+constexpr int kTopWidth = 400;      ///< the top screen
+constexpr int kTopHeight = 240;
+constexpr int kCharWidth = 6;       ///< the framework's font
+constexpr int kLineHeight = 12;
+constexpr int kEdge = 4;
 
-private:
-    static bool Inside(const Key& k, int x, int y) {
-        return x >= k.x && x < k.x + k.w && y >= k.y && y < k.y + k.h;
+inline const char* ChatPositionName(int p) {
+    static const char* const kNames[kChatPositions] = {"Top-left",    "Top-middle",    "Top-right",
+                                                       "Bottom-left", "Bottom-middle", "Bottom-right"};
+    return (p >= 0 && p < kChatPositions) ? kNames[p] : kNames[0];
+}
+
+/// The text of the position file: the place of the chat lines, then the place of the Chat button ("0 2"; digits 0..5, spaces between).
+/// A missing or wrong digit is the default: lines top-left (where they always were), button top-right.
+inline void ParseChatPositions(const std::string& text, int& lines, int& button) {
+    lines = 0;
+    button = kDefaultButtonPosition;
+    int index = 0;
+    for (char c : text) {
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            continue;
+        }
+        if (c < '0' || c > '5' || index > 1) {
+            break;
+        }
+        (index == 0 ? lines : button) = c - '0';
+        ++index;
     }
-    bool open_ = false;
-    bool was_down_ = false;
-    int list_ = 1;
-    std::size_t first_ = 0;
-    std::size_t picked_ = static_cast<std::size_t>(-1);
-    std::vector<RoomEntry> rooms_;
-};
+}
+
+/// Where line `index` of `count` shown lines (each `text_width` px wide) starts: the lines stack downwards from the top edge, or upwards
+/// from the bottom edge (the newest stays lowest either way), and sit against the left edge, the middle or the right edge.
+inline void ChatLineXY(int position, int text_width, int index, int count, int& x, int& y) {
+    const int col = (position >= 0 && position < kChatPositions) ? position % 3 : 0;
+    const bool bottom = position >= 3 && position < kChatPositions;
+    x = col == 0 ? kEdge : (col == 1 ? (kTopWidth - text_width) / 2 : kTopWidth - kEdge - text_width);
+    if (x < 0) {
+        x = 0;
+    }
+    y = bottom ? kTopHeight - kEdge - (count - index) * kLineHeight : kEdge + index * kLineHeight;
+}
 
 /// Games whose memory is so tight that even the overlay's few KB are not worth the risk: the overlay does not start there. Matched on the low
 /// half of the title id (every region of a game has its own). Monster Hunter XX (Rabbit_R) crashed with the plugin loaded (data abort writing 0xC000, a null allocation); add more title ids here.

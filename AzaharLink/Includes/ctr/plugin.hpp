@@ -75,11 +75,17 @@ public:
     /// Joins the configured room (background thread). Returns false if it cannot even start.
     bool Connect();
     void Disconnect();
-    /// The in-game ROOMS list chose a room: the next Tick leaves the room it is in and joins this one (the settings file is not changed:
+    /// The menu's room browser chose a room: the next Tick leaves the room it is in and joins this one (the settings file is not changed:
     /// the room of AzaharLink.ini is still the one the next launch joins). Callable from any thread.
     void SwitchRoom(const std::string& host, u16 port, const std::string& password);
-    /// The text of saved room list `list` (servers.txt, servers2.txt ... in the data folder), for the overlay's ROOMS list. False: no such file.
+    /// The text of room list `list` for the menu's room browser: 0 = public_rooms.txt (saved by the Setup app from the lobby), 1.. = servers.txt, servers2.txt ... False: no such file.
     bool ReadRoomList(int list, std::string& text);
+    /// The chat overlay's places (0..5): the incoming lines on the top screen and the Chat button on the bottom one; read from / written to chat_pos.txt in the data folder.
+    void LoadChatPositions(int& lines, int& button);
+    bool SaveChatPositions(int lines, int button);
+    /// The last room picked in the menu's browser (last_room.txt; before the first pick, the room of the settings): the browser lists it first.
+    bool LoadLastRoom(std::string& host, u16& port);
+    bool SaveLastRoom(const std::string& host, u16 port);
 
     /// Per-frame bookkeeping: reconnect on lost connections, flush notifications.
     /// `want_connected` is the state requested by the user.

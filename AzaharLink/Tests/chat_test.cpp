@@ -62,10 +62,24 @@ int main() {
     log.Push("B", "two", 11000);
     CHECK(log.Visible(12000, out) == 2 && out[0].text == "A: one" && out[1].text == "B: two");
     CHECK(log.Visible(10000 + chat::kShowMs + 1, out) == 1 && out[0].text == "B: two");   // the first expired
-    for (int i = 0; i < 6; ++i) log.Push("C", "line" + std::to_string(i), 20000 + i);
-    CHECK(log.Visible(20010, out) == chat::kLines && out[0].text == "C: line2" && out[3].text == "C: line5");
+    for (int i = 0; i < 10; ++i) log.Push("C", "line" + std::to_string(i), 20000 + i);
+    CHECK(log.Visible(20010, out) == chat::kLines && out[0].text == "C: line2" && out[chat::kLines - 1].text == "C: line9");
     log.Push("", std::string(300, 'z'), 30000);
     CHECK(log.Visible(30001, out) >= 1 && out[chat::kLines - 1].text.size() <= chat::kLineChars);
+    {   // a long message is wrapped, not cut: every word is still there, no line is longer than kLineChars
+        chat::Log wl;
+        std::string msg, joined;
+        for (int i = 0; i < 20; ++i) msg += "word" + std::to_string(i) + " ";
+        wl.Push("Kai", msg, 40000);
+        chat::Log::Line wo[chat::kLines];
+        const std::size_t n = wl.Visible(40001, wo);
+        bool fine = n >= 3 && wo[0].text.compare(0, 5, "Kai: ") == 0 && wo[1].text.compare(0, 2, "  ") == 0;
+        for (std::size_t i = 0; i < n; ++i) { fine = fine && wo[i].text.size() <= chat::kLineChars; joined += wo[i].text + " "; }
+        CHECK(fine);
+        CHECK(joined.find("word0") != std::string::npos && joined.find("word19") != std::string::npos);   // (the 200-character cap is not reached here)
+        wl.Push("Kai", "short", 41000);
+        CHECK(wl.Visible(41001, wo) == n + 1 && wo[n].text == "Kai: short");
+    }
     log.Push("D", "\x01\x02", 31000);                                    // nothing printable: not shown
     CHECK(log.Visible(31001, out) >= 1 && out[0].text.find("D:") == std::string::npos);
 
@@ -74,7 +88,7 @@ int main() {
     CHECK(!kb.is_open());
     CHECK(kb.OnTouch(true, 5, 200, 1000) == chat::Keyboard::Event::None);   // a tap elsewhere does nothing while closed
     kb.OnTouch(false, 0, 0, 1050);
-    CHECK(kb.OnTouch(true, chat::kChatButton.x + 5, chat::kChatButton.y + 5, 1100) == chat::Keyboard::Event::Opened && kb.is_open());
+    CHECK(kb.OnTouch(true, kb.button().x + 5, kb.button().y + 5, 1100) == chat::Keyboard::Event::Opened && kb.is_open());
     kb.OnTouch(false, 0, 0, 1150);
     CHECK(kb.OnTouch(true, 100, 5, 1200) == chat::Keyboard::Event::None && kb.is_open());   // a tap outside the keys is ignored
     kb.OnTouch(false, 0, 0, 1250);
@@ -188,34 +202,62 @@ int main() {
         CHECK(chat::RoomLabel(chat::RoomEntry{"Home", "h.net", 24872, ""}) == "Home  h.net");
         CHECK(chat::RoomLabel(chat::RoomEntry{"", "h.net", 25000, ""}) == "h.net:25000");
 
-        chat::RoomPicker pk;
-        std::vector<chat::RoomEntry> rooms;
-        for (int i = 0; i < 7; ++i) rooms.push_back(chat::RoomEntry{"r" + std::to_string(i), "h.net", 24872, ""});
-        pk.SetRooms(rooms);
-        using Ev = chat::RoomPicker::Event;
-        const int rb_x = chat::kRoomsButton.x + 2, rb_y = chat::kRoomsButton.y + 2;
-        CHECK(pk.OnTouch(false, 0, 0) == Ev::None);
-        CHECK(pk.OnTouch(true, 10, 200) == Ev::None && !pk.is_open());              // a tap elsewhere does nothing while closed
-        pk.OnTouch(false, 0, 0);
-        CHECK(pk.OnTouch(true, rb_x, rb_y) == Ev::Opened && pk.is_open());
-        CHECK(pk.OnTouch(true, rb_x, rb_y) == Ev::None);                            // held: no second press
-        pk.OnTouch(false, 0, 0);
-        CHECK(pk.OnTouch(true, chat::kPickDown.x + 2, chat::kPickDown.y + 2) == Ev::None && pk.first() == 5);
-        pk.OnTouch(false, 0, 0);
-        pk.OnTouch(true, chat::kPickDown.x + 2, chat::kPickDown.y + 2);              // already on the last page
-        CHECK(pk.first() == 5);
-        pk.OnTouch(false, 0, 0);
-        CHECK(pk.OnTouch(true, 100, chat::kRowsY + chat::kRowH + 3) == Ev::Pick && pk.has_picked() && pk.picked().name == "r6" && !pk.is_open());
-        pk.OnTouch(false, 0, 0);
-        pk.OnTouch(true, rb_x, rb_y);
-        pk.OnTouch(false, 0, 0);
-        CHECK(pk.OnTouch(true, 100, chat::kRowsY + 4 * chat::kRowH - 2) == Ev::None);  // the row under the last room is empty
-        pk.OnTouch(false, 0, 0);
-        CHECK(pk.OnTouch(true, chat::kPickList.x + 5, chat::kPickList.y + 5) == Ev::ChangeList && pk.list() == 2 && pk.rooms().empty());
-        pk.OnTouch(false, 0, 0);
-        for (int i = 0; i < chat::kRoomLists - 1; ++i) { pk.OnTouch(true, chat::kPickList.x + 5, chat::kPickList.y + 5); pk.OnTouch(false, 0, 0); }
-        CHECK(pk.list() == 1);                                                     // 2 ... kRoomLists, then back to 1
-        CHECK(pk.OnTouch(true, chat::kPickClose.x + 2, chat::kPickClose.y + 2) == Ev::Closed && !pk.is_open());
+        // pages of the menu's room browser
+        CHECK(chat::PageCount(0) == 1 && chat::PageCount(1) == 1 && chat::PageCount(5) == 1 && chat::PageCount(6) == 2 && chat::PageCount(50) == 10);
+        CHECK(chat::PageFirst(0) == 0 && chat::PageFirst(3) == 15);
+        // the public list the app writes: "<players>/<max> name", "?" for a password
+        {
+            const std::vector<chat::RoomEntry> pub = chat::ParseRoomList("1.2.3.4:24872|2/4 MH Room\n5.6.7.8:25000|0/8 Locked|?\n", chat::kPublicRooms);
+            CHECK(pub.size() == 2 && pub[0].name == "2/4 MH Room" && pub[0].password.empty() && pub[1].port == 25000 && pub[1].password == chat::kAskPassword);
+            CHECK(chat::PublicRoomsFile() == "public_rooms.txt");
+        }
+        // the last room first, and whole names
+        {
+            std::vector<chat::RoomEntry> rs = chat::ParseRoomList("a.net:1|first\nB.net:2|second\nc.net:3|third\n");
+            CHECK(chat::MoveRoomFirst(rs, "b.NET", 2) && rs.size() == 3 && rs[0].name == "second" && rs[1].name == "first" && rs[2].name == "third");
+            CHECK(chat::MoveRoomFirst(rs, "b.net", 2) && rs[0].name == "second");        // already first
+            CHECK(!chat::MoveRoomFirst(rs, "b.net", 3) && !chat::MoveRoomFirst(rs, "nope", 2) && rs.size() == 3);   // not in the list: nothing moves
+            const std::string longname = "2/4 Monster Hunter XX - hunting rank 7+ only, no AFK please! [EU]";
+            const std::vector<chat::RoomEntry> ln = chat::ParseRoomList("h.net:5|" + longname + "\n");
+            CHECK(ln.size() == 1 && ln[0].name == longname);                                  // the whole name, with its special characters
+        }
+        // the position of the chat lines on the 400 x 240 top screen
+        {
+            int x = 0, y = 0;
+            chat::ChatLineXY(0, 60, 0, 4, x, y);  CHECK(x == 4 && y == 4);                      // top-left, first line
+            chat::ChatLineXY(0, 60, 3, 4, x, y);  CHECK(x == 4 && y == 4 + 3 * 12);
+            chat::ChatLineXY(1, 60, 1, 4, x, y);  CHECK(x == 170 && y == 16);                   // top-middle: centred
+            chat::ChatLineXY(2, 60, 0, 4, x, y);  CHECK(x == 400 - 4 - 60 && y == 4);           // top-right
+            chat::ChatLineXY(3, 60, 3, 4, x, y);  CHECK(x == 4 && y == 240 - 4 - 12);           // bottom-left: newest line lowest
+            chat::ChatLineXY(4, 60, 0, 4, x, y);  CHECK(x == 170 && y == 240 - 4 - 4 * 12);
+            chat::ChatLineXY(5, 312, 0, 1, x, y); CHECK(x == 400 - 4 - 312 && y == 240 - 4 - 12);
+            chat::ChatLineXY(9, 60, 0, 1, x, y);  CHECK(x == 4 && y == 4);                      // a wrong value is top-left
+            chat::ChatLineXY(1, 500, 0, 1, x, y); CHECK(x == 0);                                // never off the left edge
+            for (int p = 0; p < chat::kChatPositions; ++p) {
+                chat::ChatLineXY(p, 312, 0, 4, x, y);
+                CHECK(x >= 0 && x + 312 <= 400 && y >= 0 && y + 12 <= 240);                     // the widest line fits on the screen in all six
+            }
+            CHECK(std::string(chat::ChatPositionName(0)) == "Top-left" && std::string(chat::ChatPositionName(5)) == "Bottom-right" && std::string(chat::ChatPositionName(77)) == "Top-left");
+            CHECK(true);
+            int pl = 9, pb = 9;
+            chat::ParseChatPositions("3 4\n", pl, pb);  CHECK(pl == 3 && pb == 4);
+            chat::ParseChatPositions("5\n", pl, pb);    CHECK(pl == 5 && pb == chat::kDefaultButtonPosition);   // an old one-digit file
+            chat::ParseChatPositions("", pl, pb);       CHECK(pl == 0 && pb == chat::kDefaultButtonPosition);
+            chat::ParseChatPositions("x4", pl, pb);     CHECK(pl == 0 && pb == chat::kDefaultButtonPosition);
+            chat::ParseChatPositions("7 1", pl, pb);    CHECK(pl == 0 && pb == chat::kDefaultButtonPosition);
+            // the Chat button: small, inside the bottom screen, six different places, and the keyboard opens from where it is put
+            for (int p = 0; p < chat::kChatPositions; ++p) {
+                const chat::Key k = chat::ChatButtonKey(p);
+                CHECK(k.w == chat::kButtonW && k.h == chat::kButtonH && k.x >= 0 && k.y >= 0 && k.x + k.w <= 320 && k.y + k.h <= 240);
+                for (int q = 0; q < p; ++q) { const chat::Key o = chat::ChatButtonKey(q); CHECK(o.x != k.x || o.y != k.y); }
+            }
+            chat::Keyboard kb2;
+            kb2.SetButtonPosition(3);
+            const chat::Key b3 = chat::ChatButtonKey(3);
+            CHECK(kb2.OnTouch(true, 300, 10, 100) == chat::Keyboard::Event::None && !kb2.is_open());        // the old top-right corner is just the game's now
+            kb2.OnTouch(false, 0, 0, 110);
+            CHECK(kb2.OnTouch(true, b3.x + 3, b3.y + 3, 120) == chat::Keyboard::Event::Opened && kb2.is_open());
+        }
         CHECK(chat::OverlayDisabledFor(0x0004000000197100ull) && !chat::OverlayDisabledFor(0x0004000000187000ull));
     }
     std::printf(fails ? "chat_test: %d FAILED\n" : "chat_test: ALL OK\n", fails);
