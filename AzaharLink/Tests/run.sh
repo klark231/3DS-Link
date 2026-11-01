@@ -48,6 +48,24 @@
 # Log() / DebugEvent() (azl/printf_lite.hpp) against newlib's, and the formats of every Log() call in the sources.
 # screen_text_test covers what the screen says about the game's memory (the reading, the mode, the limits, when a warning is told and
 # told again) and about frames lost (too slow a reader or no reader at all, from the game's UDS calls).
+# dlp_lobby_test, dlp_ipc_test, dlp_lobby_sim_test, dlp_adv_lobby_test and dlp_adv_ipc_test cover the fake Download Play lobby (azl/dlp_types.hpp, dlp_lobby.hpp and
+# dlp_ipc.hpp: pure headers, no engine, no kernel, never more than 4 players, no heap): the searcher's and the creator's logic over an in-memory virtual network
+# (every command x state, the four messages lost, doubled and late, the timers on a clock that wraps), the IPC front-end (the words of every command, the records
+# byte by byte, the game's buffers with canaries, ProbeOnly against DlpFkclHle), whole rooms of 2 to 4 consoles running the command sequences of Battle Royale and
+# Triple Deluxe, and the same modules attacked (the ambiguities, a faulty engine, bad pointers, threads). They stop at the first undefined behaviour.
+# dlp_net_adv_test is its adversarial half (the engine a game has, failures and stale lobbies, the ring, six nodes, a spectator, the beacons the engine files, another lobby of the game in the room, a peer
+# that leaves or is kicked, the room's member lists, a service that stops, admissions closed and never accepted); both use Tests/dlp_net_rig.hpp.
+# dlp_net_churn_test is the third (2026-10-29, the second review round: a console that is Connecting again when a fellow's departure refresh arrives, a leave / rejoin / leave inside 3 s,
+# the guards of the refresh, a lobby closed to new players, and a churn fuzz of random joins, leaves, kicks and rejoins after which every roster and every message must agree).
+# dlp_net_extra_test is the fourth: what the second mutation round showed missing (the table of lobbies heard, an engine no lobby used, the ring, who gets the departure's Logoff,
+# a game's host and a lobby client staying silent, foreign Logoffs and node maps, the creator's goodbye, the game's own connect path, the debug capture, 24.8 days of silence, no memory).
+# dlp_net_test covers the same lobby over the REAL UDS engine (phase 2: azl/dlp_lobby_net.hpp, the adapter, and the pieces the engine got for it): consoles that are engines joined by the in-memory room, the
+# lobby heard and joined, the whole sequence of Triple Deluxe and then the game's own UDS on the same engines (clean), an admission closed or full, four players, a client that leaves and a creator that goes,
+# the game that starts nwm::UDS under the lobby, two lobbies in one room, the messages of strangers and copies, the ring of 8, and the calls that must allocate nothing. dlp_room_probe is the same against a
+# real room server (Tests/integration.sh). Tests/dlp_net_stack_check.sh builds the adapter and the engine for the plugin's target and holds the frames and the static storage.
+# Tests/dlp_stack_check.sh (with Tests/dlp_stack_probe.cpp) builds the same three headers for the plugin's own target, with arm-none-eabi-g++ and the flags of the Makefile, and holds what the x86-64
+# tests cannot see: the frame of every function (48 bytes, PollScan and Dispatch 64), the frames added up from each function down to its deepest call out of the module (160), no recursion, no dynamic
+# frame, the sizes on ARM32 (the lobby 272 bytes, the service 40) and a wrapper for every public function. It looks for the compiler in /opt/devkitpro/devkitARM/bin too, and is skipped aloud where there is none.
 # Tests/policy_check.sh (run first) reads the sources for the defaults and switches that must not change by accident:
 # sleep_stop off, debug 0, rcvbuf_kb 64, the ini keys the plugin knows, the scan filter that only counts, the one
 # place where a log file is opened and the level check in front of it.
@@ -159,4 +177,7 @@ if [ -z "$BUILD_ONLY" ]; then
   "$OUT/ncch_icon_test"
   "$OUT/builtin_keys_test"
   "$OUT/reloc_test" $RELOC_GAME_CODE   # RELOC_GAME_CODE=<decompressed .code> adds the game sweep
+  "$OUT/hook_swap_test"
+  "$OUT/hook_swap_test_tsan"
+  "$OUT/gsp_wrapper_test" $GSP_GAME_CODE   # GSP_GAME_CODE="<decompressed .code> <text size> <expected bl address>" runs the search over a game
 fi
