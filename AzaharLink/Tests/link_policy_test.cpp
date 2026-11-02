@@ -543,6 +543,16 @@ static void TestAptSleepEvents() {
     CHECK(AptSleepEventOf(0x000B0040, none) == AptSleepEvent::None);
     CHECK(AptSleepEventOf(0x000B0040, home) == AptSleepEvent::None);
     CHECK(AptSleepEventOf(0x000B0040, failed) == AptSleepEvent::None);
+    // What comes before the swap of the plugin's memory on an Old 3DS: the HOME button and the power button (the logs of a New 3DS: 8, then 9; on an Old 3DS a
+    // power button with only 1 and 2 here left the thread in the hook and it woke up in unmapped memory), and nothing else: sleep, shutdown and "order to close" do not.
+    for (const u32 signal : {1u, 2u, 8u, 9u}) {
+        CHECK(AptSignalPrecedesSwap(signal));
+    }
+    for (const u32 signal : {0u, 3u, 4u, 5u, 6u, 7u, 10u, 11u, 12u, 0xFFFFu}) {
+        CHECK(!AptSignalPrecedesSwap(signal));
+    }
+    CHECK(AptSignalPrecedesSwap(AptSignalOf(0x1BC00008))); // the reply word of a real console for the power button, bits above the signal included
+    CHECK(AptSignalPrecedesSwap(AptSignalOf(0x1BC00001)));
     // bits above the signal (Mario Party: The Top 100 got 0x1BC00001 for the HOME button on a console, 2026-10-14): the signal is the low 16 bits
     const u32 enter_hi[] = {0x000B0080, 0, 0x1BC00005}, wake_hi[] = {0x000B0080, 0, 0x1BC00006}, home_hi[] = {0x000B0080, 0, 0x1BC00001},
               only_hi[] = {0x000B0080, 0, 0x1BC00000};
@@ -609,8 +619,39 @@ static void TestRoomMemberLines() {
     CHECK(lines.size() == 1 && lines[0] == "room: 'a' left the room (MAC' joined the room (MAC 00:1F:32:00:00:0A): 1/8 players");
 }
 
+// A player that stays in the room but plays nothing (Azahar: "is not playing") is counted out of the game's session
+static void TestRoomMemberPlays() {
+    std::printf("room members: a player with no title and no id plays nothing; the log says who stopped\n");
+    CHECK(!RoomMemberPlays("", 0));
+    CHECK(RoomMemberPlays("Kirby Battle Royale", 0x00040000001C2100ull));
+    CHECK(RoomMemberPlays("IbizaCit", 0)); // (a console with the plugin that only knows its process name)
+    CHECK(RoomMemberPlays("", 0x00040000001C2100ull)); // (an id alone is still a game)
+    const Mac mac_c = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02};
+    const RoomMemberRow host{kMacA, "Friend-A", "Kirby Battle Royale"};
+    const RoomMemberRow plays{mac_c, "Friend-A-PC", "Kirby Battle Royale"};
+    RoomMemberRow stopped = plays;
+    stopped.game = "";
+    stopped.plays = false;
+    // it played and plays nothing now: one line, with the title it had
+    std::vector<std::string> lines = RoomMemberStoppedLines({host, plays}, {host, stopped});
+    CHECK_EQ(lines.size(), std::size_t(1));
+    CHECK(lines.size() == 1 &&
+          lines[0] == "room: 'Friend-A-PC' [Kirby Battle Royale] stopped playing (still in the room, MAC 02:00:00:00:00:02): the game's session drops it");
+    // the order of the lists does not matter; the others do not get a line
+    lines = RoomMemberStoppedLines({plays, host}, {host, stopped});
+    CHECK_EQ(lines.size(), std::size_t(1));
+    // nothing changed, it plays again, it was not playing before, it came in not playing, it left the room: no line
+    CHECK(RoomMemberStoppedLines({host, plays}, {host, plays}).empty());
+    CHECK(RoomMemberStoppedLines({host, stopped}, {host, plays}).empty());
+    CHECK(RoomMemberStoppedLines({host, stopped}, {host, stopped}).empty());
+    CHECK(RoomMemberStoppedLines({host}, {host, stopped}).empty());
+    CHECK(RoomMemberStoppedLines({host, plays}, {host}).empty());
+    CHECK(RoomMemberStoppedLines({}, {}).empty());
+}
+
 int main() {
     TestRoomMemberLines();
+    TestRoomMemberPlays();
     TestLossGuard();
     TestRejoinSchedule();
     TestRejoinAfterLoss();
