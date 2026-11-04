@@ -166,6 +166,7 @@ struct Fields {
     bool tunnel = true;
     bool autoconnect = true;
     bool crossplay = false; // route local play to the MHGU crossplay hub instead of an Azahar room
+    bool cross_region = false; // turn off the scan filter for this game's session (list other-region lobbies of this game)
     int radio_like = 1; // 0, 1, 2 (ParseRadioLike)
     bool socket_buffers = true;
     int net_thread_core = -1;
@@ -175,9 +176,9 @@ struct Fields {
     int rcvbuf_kb = kRcvbufKbDefault;
     int sleep_stop = kSleepStopDefault;
 };
-constexpr int kKeyCount = 15;
+constexpr int kKeyCount = 17;
 constexpr const char* kKeyNames[kKeyCount] = {
-    "enabled", "host",      "port",  "nickname",       "password",  "tunnel",    "autoconnect", "radio_like",
+    "enabled", "host", "port", "nickname", "password", "tunnel", "autoconnect", "crossplay", "cross_region", "radio_like",
     "socket_buffers", "net_thread_core", "menu_key", "game_name", "debug", "rcvbuf_kb", "sleep_stop"};
 
 /// Values are single lines: a stray newline would corrupt the file.
@@ -204,6 +205,7 @@ inline std::string Render(const Fields& f, const std::vector<std::string>& extra
     out += std::string("tunnel=") + flag(f.tunnel) + "\n";
     out += std::string("autoconnect=") + flag(f.autoconnect) + "\n";
     out += std::string("crossplay=") + flag(f.crossplay) + "\n";
+    out += std::string("cross_region=") + flag(f.cross_region) + "\n";
     out += "radio_like=" + std::to_string(f.radio_like) + "\n";
     out += std::string("socket_buffers=") + flag(f.socket_buffers) + "\n";
     out += "net_thread_core=" + std::to_string(f.net_thread_core) + "\n";

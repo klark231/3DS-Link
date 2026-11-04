@@ -1873,6 +1873,9 @@ void Plugin::EarlyInit() {
         return room_->joined() ? room_->mac() : console_mac_;
     };
     engine_.reset(new UdsEngine(&kernel_, transport));
+    if (config_.cross_region) {
+        engine_->SetScanFilterEnforced(false); // cross-region: list other-region lobbies of this game (in a mixed room, other games too)
+    }
     hle_.reset(new UdsHle(engine_.get()));
     hle_->SetDlpProbeFake(AsksDlpOnlyForTheWireless(game_id_));
     if (DlpModeOf(game_id_) == DlpGameMode::Lobby && active_) {
@@ -1910,7 +1913,9 @@ void Plugin::EarlyInit() {
         chat_overlay::SetPosition(lines);
         chat_overlay::SetButtonPosition(button);
     }
-    chat_overlay::Attach(*room_); // (no-op unless built with -DAZL_CHAT_OVERLAY)
+    if (active_) {
+        chat_overlay::Attach(*room_); // (no-op unless built with -DAZL_CHAT_OVERLAY; OFF never starts its threads)
+    }
     room_->SetStateCallback([this](RoomClient::State state, RoomClient::Error error) {
         Log("room: %s%s%s", RoomClient::StateName(state),
             error != RoomClient::Error::None ? " - " : "",
@@ -2426,6 +2431,7 @@ void Plugin::RequestStop() {
     // Called from the framework's exit event on a very small stack: flag stores only.
     shutting_down_.store(true);
     BeginTeardown();
+    chat_overlay::Detach(); // stop the overlay's threads here: at process exit __libc_fini_array would Join the event thread, which can block (hidWaitForEvent)
     if (room_) {
         room_->RequestStop(true);
     }
@@ -2444,6 +2450,7 @@ void Plugin::Shutdown() {
     shut_down_ = true;
     shutting_down_.store(true);
     OpenSwapGate(); // (a thread stopped at the gate could never be joined)
+    chat_overlay::Detach(); // idempotent: safe if the overlay was never attached (plugin OFF) or already detached
     // The lines nobody has reported yet - the EXIT event above all: the writer reports it too if it wakes first, and
     // whichever of the two comes first logs it once - come before 'shutdown: begin', so that the end of a log reads in
     // the order it happened.
@@ -2579,6 +2586,8 @@ bool Plugin::LoadConfig() {
             config_.autoconnect = ini::ParseBool(value, true);
         } else if (key == "crossplay") {
             config_.crossplay = ini::ParseBool(value, false);
+        } else if (key == "cross_region") {
+            config_.cross_region = ini::ParseBool(value, false);
         } else if (key == "radio_like") {
             config_.radio_like = ini::ParseRadioLike(value);
         } else if (key == "socket_buffers") {
@@ -2602,6 +2611,11 @@ bool Plugin::LoadConfig() {
             config_.sleep_stop = ini::SleepStop(value); // (0, 1, 2: see azl/ini_values.hpp)
         }
     }
+    // The room the ini holds is the one SaveConfig writes back: a room picked in the browser (SwitchRoom) changes the
+    // live connection (config_.host) but not the saved one, so it is never persisted over the user's own room.
+    saved_host_ = config_.host;
+    saved_port_ = config_.port;
+    saved_password_ = config_.password;
     return true;
 }
 
@@ -2611,13 +2625,14 @@ bool Plugin::SaveConfig() {
     // written only when they differed from the default, so a file never showed them.
     ini::Fields fields;
     fields.enabled = config_.enabled;
-    fields.host = config_.host;
-    fields.port = config_.port;
+    fields.host = saved_host_;
+    fields.port = saved_port_;
     fields.nickname = config_.nickname;
-    fields.password = config_.password;
+    fields.password = saved_password_;
     fields.tunnel = config_.tunnel_enabled;
     fields.autoconnect = config_.autoconnect;
     fields.crossplay = config_.crossplay;
+    fields.cross_region = config_.cross_region;
     fields.radio_like = config_.radio_like;
     fields.socket_buffers = config_.socket_buffers;
     fields.net_thread_core = config_.net_core;

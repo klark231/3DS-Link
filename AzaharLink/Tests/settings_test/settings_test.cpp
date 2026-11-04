@@ -169,7 +169,7 @@ static void TestUnknownKeysAndRoundTrip() {
     for (char c : saved) {
         lines += c == '\n';
     }
-    CHECK(lines == 15);
+    CHECK(lines == 17);
     setup::Settings back;
     setup::LoadSettings(back);
     CHECK(back.debug == cfg.debug && back.menu_key == cfg.menu_key && back.host == cfg.host && back.port == cfg.port &&
@@ -180,7 +180,7 @@ static void TestUnknownKeysAndRoundTrip() {
 // ---- 0.1.16: the ini a fresh install, an old install and a hand edit leave behind ------------------------------------
 
 static const char* const kGoldenDefault =
-    "enabled=1\nhost=\nport=24872\nnickname=\npassword=\ntunnel=1\nautoconnect=1\nradio_like=1\nsocket_buffers=1\n"
+    "enabled=1\nhost=\nport=24872\nnickname=\npassword=\ntunnel=1\nautoconnect=1\ncrossplay=0\ncross_region=0\nradio_like=1\nsocket_buffers=1\n"
     "net_thread_core=-1\nmenu_key=off\ngame_name=\ndebug=0\nrcvbuf_kb=64\nsleep_stop=0\n";
 
 // The file of PROVA 1 as it was on the card: the 13 keys of 0.1.14, written by the Setup app (LF), and a last line that
@@ -201,9 +201,9 @@ static void TestFirstRunAndDefaults() {
     CHECK(setup::SaveSettings(d));
     CHECK(fs::is_directory("sdmc:/3ds/3DSLink")); // a save creates the folder of the file (the plugin's folder, /luma/plugins, is Luma's to have)
     CHECK(!setup::PluginsDirExists());
-    CHECK(ReadIni() == kGoldenDefault);                       // 177 bytes, LF, the 15 keys in the order of azl::ini::kKeyNames
+    CHECK(ReadIni() == kGoldenDefault);                       // 204 bytes, LF, the 17 keys in the order of azl::ini::kKeyNames
     CHECK(ReadIni() == azl::ini::Render(azl::ini::Fields())); // the app's defaults are the shared defaults
-    CHECK(ReadIni().size() == 177);
+    CHECK(ReadIni().size() == 204);
     CHECK(ReadIni().find('\r') == std::string::npos);
     setup::Settings back;
     CHECK(setup::LoadSettings(back) == setup::LoadResult::Loaded);
@@ -227,7 +227,7 @@ static void TestOldFileGainsTheTwoKeys() {
     CHECK(!setup::HasAllKeys(cfg)); // rcvbuf_kb is missing
     CHECK(setup::SaveSettings(cfg));
     const std::string saved = ReadIni();
-    CHECK(saved.size() == 194);
+    CHECK(saved.size() == 221);
     CHECK(Has(saved, "rcvbuf_kb=64") && Has(saved, "sleep_stop=1") && Has(saved, "debug=1") && Has(saved, "host=10.139.0.1"));
     CHECK(saved.find("rcvbuf_kb=64\nsleep_stop=1\n") != std::string::npos); // the two new lines last, in the table's order
     setup::Settings back;

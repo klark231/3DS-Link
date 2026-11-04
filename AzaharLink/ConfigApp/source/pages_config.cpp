@@ -155,6 +155,17 @@ protected:
                          "OFF: normal 3DS Link (join an Azahar room).";
         add(crossplay);
 
+        Row cross_region;
+        cross_region.id = kCrossRegion;
+        cross_region.kind = Kind::Toggle;
+        cross_region.label = "Cross-region";
+        cross_region.on = g.cfg.cross_region;
+        cross_region.note_title = "Cross-region";
+        cross_region.note = "ON: the scan filter is off, so another region of the SAME game (e.g. MH4U and MH4G) "
+                            "shows up and can be joined. Use it in a room where everyone plays that one game: in a "
+                            "room that mixes games, another game can show up too. OFF: only your own region. From the next title start.";
+        add(cross_region);
+
         // Three values (ini key radio_like 0, 1, 2): A and D-pad right go Off -> Broadcast -> All (twice) -> Off, left goes back.
         Row radio;
         radio.id = kRadio;
@@ -290,6 +301,11 @@ protected:
                 g.Save();
             }
             break;
+        case kCrossRegion:
+            if (SetSwitch(g.cfg.cross_region, step)) {
+                g.Save();
+            }
+            break;
         case kRadio:
             g.cfg.radio_like = step < 0 ? setup::PrevRadioLike(g.cfg.radio_like) : setup::NextRadioLike(g.cfg.radio_like);
             g.Save();
@@ -365,7 +381,7 @@ protected:
     }
 
 private:
-    enum Id { kAutoconnect = 1, kRadio, kSleep, kDebug, kMenu, kTest, kCheck, kAbout, kNickname, kDlpDelivery, kCheckUpdates, kUpdateAtStart, kCrossplay };
+    enum Id { kAutoconnect = 1, kRadio, kSleep, kDebug, kMenu, kTest, kCheck, kAbout, kNickname, kDlpDelivery, kCheckUpdates, kUpdateAtStart, kCrossplay, kCrossRegion };
 
     void EditNickname() {
         std::string input = g.cfg.nickname;

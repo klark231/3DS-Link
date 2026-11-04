@@ -36,6 +36,7 @@ struct Settings {
     bool tunnel = true;
     bool autoconnect = true;
     bool crossplay = false; // MHGU crossplay mode instead of an Azahar room
+    bool cross_region = false; // turn the scan filter off for this game (cross-region)
     int radio_like = 1; // 0 off, 1 broadcast data without retries, 2 unicast too (twice) and the room's stream as it arrives
     bool socket_buffers = true;
     int net_core = -1; // ini key net_thread_core, -1..3 as the plugin takes it (the old net_core=1 written by 0.1.3 is ignored)

@@ -45,6 +45,7 @@ struct Config {
     bool tunnel_enabled = true;           ///< false: like enabled=0 (the real local wireless is used)
     bool autoconnect = true;              ///< join the room as soon as the game has booted
     bool crossplay = false;               ///< true: bridge local play to the MHGU crossplay hub instead of an Azahar room
+    bool cross_region = false;            ///< true: turn the scan filter off for this session so other-region lobbies of this game are joinable
     int radio_like = 1;                   ///< 0 all reliable, 1 broadcast game data unreliably like the real radio, 2 unicast too, twice (ini::ParseRadioLike)
     bool socket_buffers = true;           ///< ask the soc service for bigger UDP buffers
     int net_core = -1;                    ///< core of the network thread (-1 any, 0 game core, 1 syscore)
@@ -336,6 +337,9 @@ private:
     std::string switch_host_;
     u16 switch_port_ = 0;
     std::string switch_password_;
+    std::string saved_host_;         ///< the room the ini holds: SaveConfig writes this, so a browser switch (SwitchRoom) never overwrites the user's own room
+    u16 saved_port_ = 0;
+    std::string saved_password_;
     int last_notified_error_ = -1;  ///< last room error shown on screen: do not repeat the same one
 
     // The room link and the game's session (see azl/link_policy.hpp).

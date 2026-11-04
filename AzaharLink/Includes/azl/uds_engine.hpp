@@ -502,7 +502,7 @@ private:
         u64 rx_ms;
     };
     std::list<HeardBeacon> received_beacons_;
-    bool scan_filter_enforced_ = false; // off (cross-region): the scan lists the networks of every game, so a room of another region of the game is found; the ones it would leave out are still counted
+    bool scan_filter_enforced_ = true; // on by default (2026-10-20: off, NSMB2 joined the room's Tekken lobby in a loop). The plugin turns it off for this game's session when the cross_region toggle is on (SetScanFilterEnforced)
 
     u32 connection_status_event_ = 0; // engine-owned, persistent
     u32 connect_event_ = 0;           // engine-owned, signalled when ConnectToNetwork completes

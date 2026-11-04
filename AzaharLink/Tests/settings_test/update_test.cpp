@@ -51,17 +51,17 @@ static void TestVersions() {
 }
 
 static void TestRedirect() {
-    CHECK(update::VersionFromLocation("https://github.com/gionko/3DS-Link/releases/tag/v1.0.13") == "1.0.13");
-    CHECK(update::VersionFromLocation("https://github.com/gionko/3DS-Link/releases/tag/v1.0.14-test").empty());
-    CHECK(update::VersionFromLocation("https://github.com/gionko/3DS-Link/releases/tag/1.0.13").empty());
-    CHECK(update::VersionFromLocation("https://github.com/gionko/3DS-Link/releases").empty()); // (no release at all)
+    CHECK(update::VersionFromLocation("https://github.com/klark231/3DS-Link/releases/tag/v1.0.13") == "1.0.13");
+    CHECK(update::VersionFromLocation("https://github.com/klark231/3DS-Link/releases/tag/v1.0.14-test").empty());
+    CHECK(update::VersionFromLocation("https://github.com/klark231/3DS-Link/releases/tag/1.0.13").empty());
+    CHECK(update::VersionFromLocation("https://github.com/klark231/3DS-Link/releases").empty()); // (no release at all)
     CHECK(update::VersionFromLocation("https://github.com/someone/else/releases/tag/v9.9.9").empty());
     CHECK(update::VersionFromLocation("https://evil.example/gionko/3DS-Link/releases/tag/v9.9.9").empty());
-    CHECK(update::VersionFromLocation("http://github.com/gionko/3DS-Link/releases/tag/v9.9.9").empty());
+    CHECK(update::VersionFromLocation("http://github.com/klark231/3DS-Link/releases/tag/v9.9.9").empty());
     CHECK(update::VersionFromLocation("").empty());
-    CHECK(update::AssetUrl("1.0.14", update::Target::Cia) == "https://github.com/gionko/3DS-Link/releases/download/v1.0.14/3DSLink.cia");
-    CHECK(update::AssetUrl("1.0.14", update::Target::File3dsx) == "https://github.com/gionko/3DS-Link/releases/download/v1.0.14/3DSLink.3dsx");
-    CHECK(update::ChangelogUrl("1.0.14") == "https://raw.githubusercontent.com/gionko/3DS-Link/v1.0.14/CHANGELOG.md");
+    CHECK(update::AssetUrl("1.0.14", update::Target::Cia) == "https://github.com/klark231/3DS-Link/releases/download/v1.0.14/3DSLink.cia");
+    CHECK(update::AssetUrl("1.0.14", update::Target::File3dsx) == "https://github.com/klark231/3DS-Link/releases/download/v1.0.14/3DSLink.3dsx");
+    CHECK(update::ChangelogUrl("1.0.14") == "https://raw.githubusercontent.com/klark231/3DS-Link/v1.0.14/CHANGELOG.md");
 }
 
 static void TestTarget() {

@@ -50,14 +50,14 @@ tr -d '\r' < README.md | grep -q "^| \`sleep_stop\` | $SLEEP_DEFAULT |" || fail 
 # No knob beyond these (a new ini key is a decision, not a side effect). They are 15: the 13 of 0.1.14 plus
 # rcvbuf_kb and sleep_stop. menu_key and debug are old keys: 0.1.15 only gave them values (menu_key=off, debug 0 or 1).
 KEYS=$(tr -d '\r' < Sources/ctr/plugin.cpp | grep -o 'key == "[a-z_]*"' | sed 's/key == "//; s/"//' | sort | tr '\n' ' ')
-WANTED="autoconnect crossplay debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
+WANTED="autoconnect cross_region crossplay debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
 [ "$KEYS" = "$WANTED" ] || fail "the ini keys read by the plugin are '$KEYS', expected '$WANTED'"
 
 # Both programs write all 15 keys, in one place: they fill every field of ini::Fields and call ini::Render, which writes the 15
 # lines (a writer that forgets a key, or a third writer with its own list, fails here). Before 0.1.16 the plugin left out
 # rcvbuf_kb and sleep_stop unless they were set and the app did not know them: a file made by either had no line for them and a
 # hand edit needed the key names.
-FIELDS="autoconnect crossplay debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
+FIELDS="autoconnect cross_region crossplay debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
 for f in Sources/ctr/plugin.cpp ConfigApp/source/settings.cpp; do
   GOT=$(tr -d '\r' < "$f" | grep -o 'fields\.[a-z_]* = ' | sed 's/fields\.//; s/ = //' | sort -u | tr '\n' ' ')
   [ "$GOT" = "$FIELDS" ] || fail "$f fills the ini fields '$GOT', expected '$FIELDS'"
@@ -661,11 +661,11 @@ tr -d '\r' < Sources/main.cpp | grep -A2 "static bool OnMenuOpening" | grep -q "
 need Sources/main.cpp "if ((cfg.autoconnect || g_menu_off) && !cfg.host.empty()) {" "with the menu off the room is joined at start whatever autoconnect says"
 need Includes/azl/ini_values.hpp 'return word == "off" || word == "none";' "off and none switch the menu off"
 
-# The scan filter only counts (spec C7): nothing in the plugin turns it on
-if grep -rn "SetScanFilterEnforced" Sources/ctr Sources/main.cpp >/dev/null 2>&1; then
-  fail "the plugin calls SetScanFilterEnforced: the filter's mode is the engine's default (enforced since 2026-10-20), the switch is the tests'"
-fi
-need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = false;" "the scan filter is off (cross-region): the networks of another game are listed too and only counted as left out"
+# The scan filter is on by default. The plugin may turn it OFF only behind the cross_region toggle: exactly one
+# call, and it is gated. (2026-10-20: off for everyone, NSMB2 joined the room's Tekken lobby in a loop.)
+[ "$(grep -rho 'SetScanFilterEnforced' Sources/ctr Sources/main.cpp | wc -l)" = "1" ] || fail "SetScanFilterEnforced must be called exactly once in the plugin (only the cross_region gate turns the filter off)"
+need Sources/ctr/plugin.cpp "if (config_.cross_region) {" "the scan filter is turned off only behind the cross_region toggle"
+need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = true;" "the scan filter is on by default; only the cross_region toggle turns it off for a session"
 
 # The sleep action exists in one place, behind sleep_stop
 [ "$(grep -c 'StopService(' Sources/ctr/plugin.cpp)" = "1" ] || fail "StopService is called from more than one place in Sources/ctr/plugin.cpp"
@@ -764,7 +764,7 @@ need Sources/azl/log.cpp "out->resize(at + 2 * static_cast<std::size_t>(n) + 1);
 #   the screen says when it is the log that slows the game (the SD card busy, the capture dropping records)
 need Sources/ctr/plugin.cpp "constexpr int kLogWriterPriority = 0x2E;" "the writer runs above the game's threads and the network thread"
 need Sources/ctr/plugin.cpp "            0, kLogWriterPriority)) {" "... and that is the priority its thread is started with"
-need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = false;" "the scan filter is off (cross-region: another region of a game has its own ids; with it on, 2026-10-20 NSMB2 had listed and joined the emulator's Tekken lobby)"
+need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = true;" "the scan filter is on by default (2026-10-20 with it off, NSMB2 listed and joined the emulator's Tekken lobby in a loop); only the cross_region toggle turns it off"
 need Sources/ctr/plugin.cpp "AzaharLink debug: SD card busy %lu%%, capture lost %lu%% (the log slows the game)" "with the log on the screen says when the log slows the game"
 need Sources/ctr/plugin.cpp "    CheckDebugLoad(s);" "... checked every statistics window"
 need Sources/ctr/plugin.cpp "    if (card_pct >= 50 || lost_pct >= 30) {" "... when the card was ours half the time, or the ring dropped almost a third"

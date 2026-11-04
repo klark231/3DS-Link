@@ -16,10 +16,10 @@
 
 namespace update {
 
-constexpr const char* kLatestUrl = "https://github.com/gionko/3DS-Link/releases/latest";
-constexpr const char* kTagPrefix = "https://github.com/gionko/3DS-Link/releases/tag/v";
-constexpr const char* kDownloadPrefix = "https://github.com/gionko/3DS-Link/releases/download/v";
-constexpr const char* kChangelogPrefix = "https://raw.githubusercontent.com/gionko/3DS-Link/v";
+constexpr const char* kLatestUrl = "https://github.com/klark231/3DS-Link/releases/latest";
+constexpr const char* kTagPrefix = "https://github.com/klark231/3DS-Link/releases/tag/v";
+constexpr const char* kDownloadPrefix = "https://github.com/klark231/3DS-Link/releases/download/v";
+constexpr const char* kChangelogPrefix = "https://raw.githubusercontent.com/klark231/3DS-Link/v";
 
 // More than either file will ever be: an answer of this size is not ours.
 constexpr std::size_t kMaxFileBytes = 32u * 1024u * 1024u;
@@ -311,7 +311,7 @@ inline std::string UpToDateText(const std::string& current) {
 }
 
 inline std::string NoFileText(const std::string& latest) {
-    return "3DS Link v" + latest + " is out, but this copy was started without the path of its file, so it cannot replace itself. Get it from github.com/gionko/3DS-Link.";
+    return "3DS Link v" + latest + " is out, but this copy was started without the path of its file, so it cannot replace itself. Get it from github.com/klark231/3DS-Link.";
 }
 
 // Why a check or a download did not work (nothing has changed on the console when this is shown).

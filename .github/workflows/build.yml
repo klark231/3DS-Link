@@ -57,6 +57,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         with:
           tag_name: build-${{ github.run_number }}
+          prerelease: true
+          make_latest: false
           files: |
             AzaharLink/AzaharLink.3gx
             AzaharLink/ConfigApp/3DSLink.3dsx
