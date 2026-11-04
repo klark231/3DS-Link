@@ -901,7 +901,7 @@ private:
             b = static_cast<u8>(Rand32());
         }
         char ssid[33];
-        std::snprintf(ssid, sizeof ssid, "MHGURecomp%08x%08x", Rand32(), Rand32());
+        std::snprintf(ssid, sizeof ssid, "MHGURecomp%08x%08x", static_cast<unsigned>(Rand32()), static_cast<unsigned>(Rand32()));
         host_ssid = ssid;
         host_auth = static_cast<u64>(Rand32()) << 32 | Rand32();
         pia.Reset(Settings::values.mhgu_hub_convert.GetValue());
@@ -1176,7 +1176,7 @@ private:
             return; // (copies of the update for players already in: the hub tells them itself)
         }
         const auto logoff = ParseEAPoLLogoffFrame(p.data);
-        const int id = logoff.assigned_node_id;
+        const int id = static_cast<u16>(logoff.assigned_node_id);
         const int slot = id - 1;
         Pending pd = *it;
         pending.erase(it);

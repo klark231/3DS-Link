@@ -273,8 +273,7 @@ need ConfigApp/titleshare/source/log.c "if(logrot_due(gBytes)) {" "the log rotat
 # defaults, obfuscated in builtin_keys_blob.h and read by builtin_keys.c; no source writes either of them inline, and the library gets the IV from its caller
 need ConfigApp/titleshare_host/builtin_keys.c 'uint8_t key[16] = {0}, ctr[16] = {0};' "the built-in blob is opened with a key of zeros and a counter of zeros, like Azahar's"
 need ConfigApp/titleshare_host/builtin_keys.c 'aes_ctr_crypt(rk, ctr, 0, text, sizeof(bk_blob));' "the built-in blob is opened with the AES the app already has"
-[ "$(tr -d '
-' < ConfigApp/titleshare/common/sdcrypt.c | grep -c -F 'if(bk_get(BK_GENERATOR_CONSTANT, cbytes) != 0) {')" = 2 ] || fail "ConfigApp/titleshare/common/sdcrypt.c: the SD key and the NCCH key must both take the key generator's constant from the built-in values"
+[ "$(tr -d '' < ConfigApp/titleshare/common/sdcrypt.c | grep -c -F 'if(bk_get(BK_GENERATOR_CONSTANT, cbytes) != 0) {')" = 2 ] || fail "ConfigApp/titleshare/common/sdcrypt.c: the SD key and the NCCH key must both take the key generator's constant from the built-in values"
 if grep -rn -E 'static const u128 C |DLP_IV\[' ConfigApp --include=*.c --include=*.h --include=*.cpp --include=*.hpp; then
   fail "a source carries the key generator's constant or the Download Play IV inline: they are only in builtin_keys_blob.h, obfuscated"
 fi

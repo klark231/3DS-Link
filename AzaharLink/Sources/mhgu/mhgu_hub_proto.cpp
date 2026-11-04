@@ -10,6 +10,8 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <mutex>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -260,10 +262,26 @@ static void SetNonblock(Sock s, bool on) {
 #endif
 }
 
+#ifndef _WIN32
+#ifndef SO_RCVTIMEO
+// (libctru has no SO_RCVTIMEO: remember the timeout per socket and wait with select() in RecvAll)
+#define MHGU_SOFT_RCVTIMEO 1
+static std::mutex g_rcvto_mutex;
+static std::map<int, int> g_rcvto_ms;
+#endif
+#endif
+
 void SetRecvTimeout(Sock s, int ms) {
 #ifdef _WIN32
     DWORD v = static_cast<DWORD>(ms);
     setsockopt(Raw(s), SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&v), sizeof v);
+#elif defined(MHGU_SOFT_RCVTIMEO)
+    std::lock_guard<std::mutex> lk(g_rcvto_mutex);
+    if (ms > 0) {
+        g_rcvto_ms[static_cast<int>(Raw(s))] = ms;
+    } else {
+        g_rcvto_ms.erase(static_cast<int>(Raw(s)));
+    }
 #else
     timeval tv{ms / 1000, (ms % 1000) * 1000};
     setsockopt(Raw(s), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
@@ -363,6 +381,23 @@ bool SendAll(Sock s, const void* data, std::size_t size) {
 bool RecvAll(Sock s, void* data, std::size_t size) {
     char* p = static_cast<char*>(data);
     while (size) {
+#ifdef MHGU_SOFT_RCVTIMEO
+        int to_ms = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_rcvto_mutex);
+            const auto it = g_rcvto_ms.find(static_cast<int>(Raw(s)));
+            to_ms = it == g_rcvto_ms.end() ? 0 : it->second;
+        }
+        if (to_ms > 0) {
+            fd_set rs;
+            FD_ZERO(&rs);
+            FD_SET(Raw(s), &rs);
+            timeval tvw{to_ms / 1000, (to_ms % 1000) * 1000};
+            if (select(static_cast<int>(Raw(s)) + 1, &rs, nullptr, nullptr, &tvw) <= 0) {
+                return false;
+            }
+        }
+#endif
         const int k = recv(Raw(s), p, static_cast<int>(size), 0);
         if (k <= 0) {
             return false;
@@ -1013,8 +1048,9 @@ void PiaTranslator::Learn(const PiaMessage& m, bool from_3ds) {
             self_addr = addr;
             has_self = true;
             Log("[hub] the 3DS's station address is %02x%02x%02x%02x; on the hub it is %u.%u.%u.%u", addr[0],
-                addr[1], addr[2], addr[3], self_ip >> 24, (self_ip >> 16) & 255, (self_ip >> 8) & 255,
-                self_ip & 255);
+                addr[1], addr[2], addr[3], static_cast<unsigned>(self_ip >> 24),
+                static_cast<unsigned>((self_ip >> 16) & 255), static_cast<unsigned>((self_ip >> 8) & 255),
+                static_cast<unsigned>(self_ip & 255));
         }
         return;
     }
