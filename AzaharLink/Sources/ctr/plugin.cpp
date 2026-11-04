@@ -1770,16 +1770,31 @@ void Plugin::EarlyInit() {
     }
 
     room_.reset(new RoomClient());
+    if (config_.crossplay) {
+        crossplay_.reset(new azlx::CrossplayBridge());
+    }
 
     UdsEngine::Transport transport;
     transport.send = [this](WifiPacket& packet) {
+        if (config_.crossplay) {
+            packet.transmitter_address = console_mac_;
+            if (crossplay_) {
+                crossplay_->SendFrame(packet); // beacon -> hub listing, the rest -> the hub
+            }
+            return;
+        }
         if (!room_->joined()) {
             return; // not in a room: frames go nowhere, like an emulator without a connection
         }
         packet.transmitter_address = room_->mac();
         room_->SendWifiPacket(packet);
     };
-    transport.get_mac = [this]() { return room_->joined() ? room_->mac() : console_mac_; };
+    transport.get_mac = [this]() {
+        if (config_.crossplay) {
+            return console_mac_;
+        }
+        return room_->joined() ? room_->mac() : console_mac_;
+    };
     engine_.reset(new UdsEngine(&kernel_, transport));
     hle_.reset(new UdsHle(engine_.get()));
     hle_->SetDlpProbeFake(AsksDlpOnlyForTheWireless(game_id_));
@@ -2483,6 +2498,8 @@ bool Plugin::LoadConfig() {
             config_.tunnel_enabled = ini::ParseBool(value, true);
         } else if (key == "autoconnect") {
             config_.autoconnect = ini::ParseBool(value, true);
+        } else if (key == "crossplay") {
+            config_.crossplay = ini::ParseBool(value, false);
         } else if (key == "radio_like") {
             config_.radio_like = ini::ParseRadioLike(value);
         } else if (key == "socket_buffers") {
@@ -2521,6 +2538,7 @@ bool Plugin::SaveConfig() {
     fields.password = config_.password;
     fields.tunnel = config_.tunnel_enabled;
     fields.autoconnect = config_.autoconnect;
+    fields.crossplay = config_.crossplay;
     fields.radio_like = config_.radio_like;
     fields.socket_buffers = config_.socket_buffers;
     fields.net_thread_core = config_.net_core;
@@ -2572,6 +2590,28 @@ std::string Plugin::GameName() const {
 }
 
 bool Plugin::Connect() {
+    if (config_.crossplay) {
+        if (!InitSockets()) {
+            PostNotification(SocketInitFailure());
+            return false;
+        }
+        // config_.host holds the hub servers in this mode (space/comma list); empty = the defaults.
+        const std::string servers =
+            config_.host.empty()
+                ? std::string("hunterhubid-gu-hub.duckdns.org morerokk-mhgurecomp-ldnserver.duckdns.org")
+                : config_.host;
+        const bool ok = crossplay_ && crossplay_->Start(
+            servers, config_.password,
+            [this](const azl::WifiPacket& p) { engine_->OnWifiPacket(p); }, // hub -> game
+            [this]() { return console_mac_; },
+            [this](u64 now_ms) {
+                engine_->Tick(now_ms);
+                crossplay_->Scan(0, 0); // keep the hub list warm so a search finds MHGU rooms
+            });
+        Log("crossplay: %s -> MHGU hub (%s)", ok ? "bridging local play" : "could not start",
+            servers.c_str());
+        return ok;
+    }
     if (config_.host.empty()) {
         PostNotification("Set the room address first");
         return false;

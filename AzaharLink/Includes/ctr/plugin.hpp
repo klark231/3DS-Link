@@ -14,6 +14,7 @@
 #include "azl/link_policy.hpp"
 #include "azl/log_files.hpp"
 #include "azl/platform.hpp"
+#include "ctr/crossplay.hpp"
 #include "azl/room_client.hpp"
 #include "azl/room_members.hpp"
 #include "azl/screen_text.hpp"
@@ -43,6 +44,7 @@ struct Config {
     std::string password;
     bool tunnel_enabled = true;           ///< false: like enabled=0 (the real local wireless is used)
     bool autoconnect = true;              ///< join the room as soon as the game has booted
+    bool crossplay = false;               ///< true: bridge local play to the MHGU crossplay hub instead of an Azahar room
     int radio_like = 1;                   ///< 0 all reliable, 1 broadcast game data unreliably like the real radio, 2 unicast too, twice (ini::ParseRadioLike)
     bool socket_buffers = true;           ///< ask the soc service for bigger UDP buffers
     int net_core = -1;                    ///< core of the network thread (-1 any, 0 game core, 1 syscore)
@@ -256,6 +258,7 @@ private:
 
     CtrKernelOps kernel_;
     std::unique_ptr<RoomClient> room_;
+    std::unique_ptr<azlx::CrossplayBridge> crossplay_; ///< drives the MHGU hub when config_.crossplay
     std::unique_ptr<UdsEngine> engine_;
     std::unique_ptr<UdsHle> hle_;
     /// The fake Download Play lobby (azl/dlp_hub.hpp): only for the games in Lobby mode (kDlpGames in plugin.cpp), null for the others.

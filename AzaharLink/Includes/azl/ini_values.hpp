@@ -165,6 +165,7 @@ struct Fields {
     std::string password;
     bool tunnel = true;
     bool autoconnect = true;
+    bool crossplay = false; // route local play to the MHGU crossplay hub instead of an Azahar room
     int radio_like = 1; // 0, 1, 2 (ParseRadioLike)
     bool socket_buffers = true;
     int net_thread_core = -1;
@@ -202,6 +203,7 @@ inline std::string Render(const Fields& f, const std::vector<std::string>& extra
     out += "password=" + OneLine(f.password) + "\n";
     out += std::string("tunnel=") + flag(f.tunnel) + "\n";
     out += std::string("autoconnect=") + flag(f.autoconnect) + "\n";
+    out += std::string("crossplay=") + flag(f.crossplay) + "\n";
     out += "radio_like=" + std::to_string(f.radio_like) + "\n";
     out += std::string("socket_buffers=") + flag(f.socket_buffers) + "\n";
     out += "net_thread_core=" + std::to_string(f.net_thread_core) + "\n";

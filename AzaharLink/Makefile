@@ -13,8 +13,8 @@ TARGET		:= 	AzaharLink
 PLGINFO 	:= 	CTRPluginFramework.plgInfo
 
 BUILD		:= 	Build
-INCLUDES	:= 	Includes
-SOURCES 	:= 	Sources Sources/azl Sources/ctr Sources/enet
+INCLUDES	:= 	Includes Includes/mhgu_compat Includes/mhgu_compat/fmt_include
+SOURCES 	:= 	Sources Sources/azl Sources/ctr Sources/enet Sources/mhgu
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -31,7 +31,7 @@ ifeq ($(CHAT),1)
 CFLAGS		+=	-DAZL_CHAT_OVERLAY
 endif
 
-CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
+CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++20 -DFMT_HEADER_ONLY=1 -DFMT_EXCEPTIONS=0
 
 ASFLAGS		:=	$(ARCH)
 # --wrap=srvGetServiceHandle lets ctr/soc.cpp hand libctru's socInit() a soc:U session even when the

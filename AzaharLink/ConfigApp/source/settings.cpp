@@ -193,6 +193,8 @@ LoadResult LoadSettings(Settings& cfg) {
             cfg.tunnel = azl::ini::ParseBool(value, true);
         } else if (key == "autoconnect") {
             cfg.autoconnect = azl::ini::ParseBool(value, true);
+        } else if (key == "crossplay") {
+            cfg.crossplay = azl::ini::ParseBool(value, false);
         } else if (key == "radio_like") {
             cfg.radio_like = azl::ini::ParseRadioLike(value);
         } else if (key == "socket_buffers") {
@@ -245,6 +247,7 @@ bool SaveSettings(const Settings& cfg) {
     fields.password = cfg.password;
     fields.tunnel = cfg.tunnel;
     fields.autoconnect = cfg.autoconnect;
+    fields.crossplay = cfg.crossplay;
     fields.radio_like = cfg.radio_like;
     fields.socket_buffers = cfg.socket_buffers;
     fields.net_thread_core = cfg.net_core;

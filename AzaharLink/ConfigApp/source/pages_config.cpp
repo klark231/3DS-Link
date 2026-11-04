@@ -144,6 +144,17 @@ protected:
                                  "whatever this switch says.";
         add(autoconnect);
 
+        Row crossplay;
+        crossplay.id = kCrossplay;
+        crossplay.kind = Kind::Toggle;
+        crossplay.label = "MHGU Crossplay";
+        crossplay.on = g.cfg.crossplay;
+        crossplay.note_title = "MHGU Crossplay";
+        crossplay.note = "ON: local play is bridged to the MHGU crossplay hub, to play with MHGU "
+                         "(Switch/Android) players.\n"
+                         "OFF: normal 3DS Link (join an Azahar room).";
+        add(crossplay);
+
         // Three values (ini key radio_like 0, 1, 2): A and D-pad right go Off -> Broadcast -> All (twice) -> Off, left goes back.
         Row radio;
         radio.id = kRadio;
@@ -274,6 +285,11 @@ protected:
                 g.Save();
             }
             break;
+        case kCrossplay:
+            if (SetSwitch(g.cfg.crossplay, step)) {
+                g.Save();
+            }
+            break;
         case kRadio:
             g.cfg.radio_like = step < 0 ? setup::PrevRadioLike(g.cfg.radio_like) : setup::NextRadioLike(g.cfg.radio_like);
             g.Save();
@@ -349,7 +365,7 @@ protected:
     }
 
 private:
-    enum Id { kAutoconnect = 1, kRadio, kSleep, kDebug, kMenu, kTest, kCheck, kAbout, kNickname, kDlpDelivery, kCheckUpdates, kUpdateAtStart };
+    enum Id { kAutoconnect = 1, kRadio, kSleep, kDebug, kMenu, kTest, kCheck, kAbout, kNickname, kDlpDelivery, kCheckUpdates, kUpdateAtStart, kCrossplay };
 
     void EditNickname() {
         std::string input = g.cfg.nickname;
