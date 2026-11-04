@@ -31,7 +31,11 @@ ifeq ($(CHAT),1)
 CFLAGS		+=	-DAZL_CHAT_OVERLAY
 endif
 
-CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++20 -DFMT_HEADER_ONLY=1 -DFMT_EXCEPTIONS=0
+CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
+# The MHGU bridge (Sources/mhgu) and the crossplay glue need C++20 (std::span) and header-only
+# fmt; the rest of the plugin stays gnu++17. Per-object override:
+BRIDGE_OFILES := crossplay.o mhgu_hub.o mhgu_hub_proto.o minicrypto.o uds_beacon.o uds_connection.o uds_data.o
+$(BRIDGE_OFILES): CXXFLAGS := $(filter-out -std=gnu++17,$(CXXFLAGS)) -std=gnu++20 -DFMT_HEADER_ONLY=1 -DFMT_EXCEPTIONS=0
 
 ASFLAGS		:=	$(ARCH)
 # --wrap=srvGetServiceHandle lets ctr/soc.cpp hand libctru's socInit() a soc:U session even when the

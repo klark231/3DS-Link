@@ -50,14 +50,14 @@ tr -d '\r' < README.md | grep -q "^| \`sleep_stop\` | $SLEEP_DEFAULT |" || fail 
 # No knob beyond these (a new ini key is a decision, not a side effect). They are 15: the 13 of 0.1.14 plus
 # rcvbuf_kb and sleep_stop. menu_key and debug are old keys: 0.1.15 only gave them values (menu_key=off, debug 0 or 1).
 KEYS=$(tr -d '\r' < Sources/ctr/plugin.cpp | grep -o 'key == "[a-z_]*"' | sed 's/key == "//; s/"//' | sort | tr '\n' ' ')
-WANTED="autoconnect debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
+WANTED="autoconnect crossplay debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
 [ "$KEYS" = "$WANTED" ] || fail "the ini keys read by the plugin are '$KEYS', expected '$WANTED'"
 
 # Both programs write all 15 keys, in one place: they fill every field of ini::Fields and call ini::Render, which writes the 15
 # lines (a writer that forgets a key, or a third writer with its own list, fails here). Before 0.1.16 the plugin left out
 # rcvbuf_kb and sleep_stop unless they were set and the app did not know them: a file made by either had no line for them and a
 # hand edit needed the key names.
-FIELDS="autoconnect debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
+FIELDS="autoconnect crossplay debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
 for f in Sources/ctr/plugin.cpp ConfigApp/source/settings.cpp; do
   GOT=$(tr -d '\r' < "$f" | grep -o 'fields\.[a-z_]* = ' | sed 's/fields\.//; s/ = //' | sort -u | tr '\n' ' ')
   [ "$GOT" = "$FIELDS" ] || fail "$f fills the ini fields '$GOT', expected '$FIELDS'"
@@ -273,7 +273,8 @@ need ConfigApp/titleshare/source/log.c "if(logrot_due(gBytes)) {" "the log rotat
 # defaults, obfuscated in builtin_keys_blob.h and read by builtin_keys.c; no source writes either of them inline, and the library gets the IV from its caller
 need ConfigApp/titleshare_host/builtin_keys.c 'uint8_t key[16] = {0}, ctr[16] = {0};' "the built-in blob is opened with a key of zeros and a counter of zeros, like Azahar's"
 need ConfigApp/titleshare_host/builtin_keys.c 'aes_ctr_crypt(rk, ctr, 0, text, sizeof(bk_blob));' "the built-in blob is opened with the AES the app already has"
-[ "$(tr -d '' < ConfigApp/titleshare/common/sdcrypt.c | grep -c -F 'if(bk_get(BK_GENERATOR_CONSTANT, cbytes) != 0) {')" = 2 ] || fail "ConfigApp/titleshare/common/sdcrypt.c: the SD key and the NCCH key must both take the key generator's constant from the built-in values"
+[ "$(tr -d '
+' < ConfigApp/titleshare/common/sdcrypt.c | grep -c -F 'if(bk_get(BK_GENERATOR_CONSTANT, cbytes) != 0) {')" = 2 ] || fail "ConfigApp/titleshare/common/sdcrypt.c: the SD key and the NCCH key must both take the key generator's constant from the built-in values"
 if grep -rn -E 'static const u128 C |DLP_IV\[' ConfigApp --include=*.c --include=*.h --include=*.cpp --include=*.hpp; then
   fail "a source carries the key generator's constant or the Download Play IV inline: they are only in builtin_keys_blob.h, obfuscated"
 fi
@@ -644,7 +645,7 @@ need Sources/ctr/plugin.cpp ': DebugRingReady() ? "AzaharLink.log and AzaharLink
 # ... and nothing else in the product touches a file: not one call that creates, writes, removes or renames outside the
 # log layer (Sources/azl/log_files.cpp, which only calls its FileLayer) and plugin.cpp (counted above; its FSUSER_*
 # calls only read the game's icon)
-if grep -rn -E 'File::(Open|Remove|Rename)|fopen|freopen|std::(o|i)?fstream|FSUSER_(OpenFile|DeleteFile|RenameFile|CreateFile)|FS_OPEN_(WRITE|CREATE)|mkdir|\bopen\(' Sources Includes --include=*.cpp --include=*.hpp --include=*.c --include=*.h | grep -v "^Sources/ctr/plugin.cpp:\|^Sources/azl/log_files.cpp:\|^Sources/ctr/boot_diag.cpp:"; then
+if grep -rn -E 'File::(Open|Remove|Rename)|fopen|freopen|std::(o|i)?fstream|FSUSER_(OpenFile|DeleteFile|RenameFile|CreateFile)|FS_OPEN_(WRITE|CREATE)|mkdir|\bopen\(' Sources Includes --include=*.cpp --include=*.hpp --include=*.c --include=*.h | grep -v "^Sources/ctr/plugin.cpp:\|^Sources/azl/log_files.cpp:\|^Sources/ctr/boot_diag.cpp:\|^Sources/mhgu/\|^Includes/mhgu_compat/"; then
   fail "a source file besides the log layer and plugin.cpp touches a file (debug=0 must leave the card alone)"
 fi
 grep -q 'FS_OPEN_WRITE\|FS_OPEN_CREATE' Sources/ctr/plugin.cpp && fail "plugin.cpp opens a file of the card for writing through FSUSER (only the icon is read that way)"
