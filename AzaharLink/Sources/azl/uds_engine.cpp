@@ -864,8 +864,12 @@ void UdsEngine::HandleEapolPacket(const WifiPacket& packet) {
             return;
         }
         EapolStart start;
-        if (!ParseEapolStartFrame(packet.data, &start)) {
+        bool legacy_start = false;
+        if (!ParseCompatibleEapolStartFrame(packet.data, &start, &legacy_start)) {
             return;
+        }
+        if (legacy_start) {
+            Log("uds: client sent non-standard connection type, treated as Client");
         }
         NodeInfo node = start.node;
 

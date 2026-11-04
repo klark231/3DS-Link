@@ -410,6 +410,32 @@ bool ParseEapolStartFrame(const std::vector<u8>& frame, EapolStart* out) {
     return true;
 }
 
+bool ParseCompatibleEapolStartFrame(const std::vector<u8>& frame, EapolStart* out, bool* legacy) {
+    if (!ParseEapolStartFrame(frame, out)) {
+        return false;
+    }
+    const u8 raw_type = out->connection_type;
+    bool is_legacy = true;
+    switch (raw_type) {
+    case 1:
+        out->connection_type = static_cast<u8>(ConnectionType::Client);
+        is_legacy = false; // the standard value
+        break;
+    case 2:
+        out->connection_type = static_cast<u8>(ConnectionType::Spectator);
+        is_legacy = false; // the standard value
+        break;
+    case 0:
+    default:
+        out->connection_type = static_cast<u8>(ConnectionType::Client);
+        break;
+    }
+    if (legacy) {
+        *legacy = is_legacy;
+    }
+    return true;
+}
+
 std::vector<u8> GenerateEapolLogoffFrame(u16 network_node_id, const std::vector<NodeInfo>& nodes,
                                          u8 max_nodes, u8 total_nodes) {
     std::vector<u8> buffer = GenerateLlcHeader(EtherType::EAPoL);
