@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "azl/once.hpp"
+#include "azl/safe_thread.hpp"
 #include "common/logging/log.h"
 #include "common/settings.h"
 #include "core/hle/service/nwm/mhgu_hub_proto.h"
@@ -139,7 +140,7 @@ std::string Key() {
 
 class Bridge {
 public:
-    void Attach(std::function<void(const WifiPacket&)> deliver, std::function<void()> lost,
+    bool Attach(std::function<void(const WifiPacket&)> deliver, std::function<void()> lost,
                 std::function<MacAddress()> mac) {
         Detach();
         {
@@ -155,7 +156,21 @@ public:
             tasks.clear();
             running = true;
         }
-        worker = std::thread([this] { Run(); });
+        // (azl/safe_thread.hpp: a std::thread that cannot start throws, and the plugin has no exceptions: the game died here)
+        // A refusal can be momentary (the game is starting its own threads): three tries, 100 ms apart.
+        for (int attempt = 0; attempt < 3 && !worker.joinable(); attempt++) {
+            if (attempt > 0) {
+                std::this_thread::sleep_for(100ms);
+            }
+            worker = azl::SafeThread([this] { Run(); });
+        }
+        if (!worker.joinable()) {
+            LOG_WARNING(Service_NWM, "[hub] could not start the bridge thread: crossplay stays off");
+            std::scoped_lock lock{task_mutex};
+            running = false;
+            return false;
+        }
+        return true;
     }
 
     void Detach() {
@@ -439,12 +454,16 @@ private:
         }
         const auto servers = H::ParseServerList(Servers());
         const std::string key = Key();
-        list_thread = std::thread([this, servers, key] {
+        list_thread = azl::SafeThread([this, servers, key] {
             std::vector<std::vector<H::ListedHub>> found(servers.size());
             std::vector<H::ServerState> states(servers.size(), H::ServerState::NoAnswer);
-            std::vector<std::thread> ts;
+            std::vector<azl::SafeThread> ts;
             for (std::size_t i = 0; i < servers.size(); i++) {
-                ts.emplace_back([&, i] { states[i] = H::ListHubs(servers[i], key, 1500, found[i]); });
+                const std::function<void()> ask = [&, i] { states[i] = H::ListHubs(servers[i], key, 1500, found[i]); };
+                ts.emplace_back(ask);
+                if (!ts.back().joinable()) {
+                    ask(); // no thread for this server: ask it here (slower, but the list still comes)
+                }
             }
             for (auto& t : ts) {
                 t.join();
@@ -465,6 +484,9 @@ private:
             }
             Post([this, all] { OnList(all); });
         });
+        if (!list_thread.joinable()) {
+            LOG_WARNING(Service_NWM, "[hub] could not start the list thread: no hub list this time");
+        }
     }
 
     void OnList(std::vector<H::ListedHub> hubs) {
@@ -594,7 +616,7 @@ private:
         if (join_thread.joinable()) {
             join_thread.join();
         }
-        join_thread = std::thread([this, gen, hub, key, hello] {
+        join_thread = azl::SafeThread([this, gen, hub, key, hello] {
             H::Spliced sp;
             const u32 err = H::JoinHub(hub.server, key, hub.id, sp);
             if (err) {
@@ -614,6 +636,9 @@ private:
             }
             Post([this, gen, sp, type, buf] { StationJoined(gen, sp, type, buf); });
         });
+        if (!join_thread.joinable()) {
+            Post([this, gen] { StationJoinFailed(gen, "no thread to join with"); }); // (the game gets an answer, not a hang)
+        }
     }
 
     static const char* RefuseReason(u32 r) {
@@ -679,7 +704,7 @@ private:
         pia.SetSubnet(sta_subnet);
         captures = 0;
         sta = Sta::Connected;
-        up_reader = std::thread([this, gen, s = up] {
+        up_reader = azl::SafeThread([this, gen, s = up] {
             u8 t = 0;
             std::vector<u8> b;
             int n;
@@ -708,7 +733,7 @@ private:
         if (up_udp != H::BadSock) {
             up_udp_run = true;
             up_udp_ok = false;
-            up_udp_thread = std::thread([this, gen, s = up_udp, pair = up_pair, secret = up_secret,
+            up_udp_thread = azl::SafeThread([this, gen, s = up_udp, pair = up_pair, secret = up_secret,
                                          token = up_token] {
                 auto next_hello = Clock::now();
                 std::vector<u8> buf;
@@ -883,7 +908,7 @@ private:
     struct Station {
         bool alive = false;
         H::Sock sock = H::BadSock;
-        std::thread reader;
+        azl::SafeThread reader;
         u32 ip = 0;
         MacAddress mac{};
         std::string name;
@@ -930,7 +955,7 @@ private:
         if (host_udp != H::BadSock) {
             host_udp_run = true;
             const u64 gen = host_gen;
-            host_udp_thread = std::thread([this, gen, s = host_udp] {
+            host_udp_thread = azl::SafeThread([this, gen, s = host_udp] {
                 std::vector<u8> buf;
                 while (host_udp_run) {
                     H::Endpoint from;
@@ -1229,7 +1254,7 @@ private:
             H::UdpSendTo(host_udp, s.uaddr, H::EncodeRelayRegister(s.pair, s.secret));
         }
         const u64 gen = host_gen;
-        s.reader = std::thread([this, gen, slot, sock = s.sock] {
+        s.reader = azl::SafeThread([this, gen, slot, sock = s.sock] {
             u8 t = 0;
             std::vector<u8> b;
             int n;
@@ -1326,7 +1351,7 @@ private:
     std::condition_variable task_cv;
     std::deque<std::function<void()>> tasks;
     bool running = false;
-    std::thread worker;
+    azl::SafeThread worker;
 
     std::mutex attach_mutex;
     std::function<void(const WifiPacket&)> deliver_fn;
@@ -1342,7 +1367,7 @@ private:
     std::vector<Listed> listed;
     Clock::time_point last_list{};
     bool list_pending = false;
-    std::thread list_thread;
+    azl::SafeThread list_thread;
     u32 scan_comm = MhxxCommId;
     u8 scan_id = 0;
 
@@ -1353,16 +1378,16 @@ private:
     NodeInfo my_node{};
     MacAddress my_mac{};
     Clock::time_point assoc_started{};
-    std::thread join_thread;
+    azl::SafeThread join_thread;
     H::Sock up = H::BadSock;
-    std::thread up_reader;
+    azl::SafeThread up_reader;
     u32 up_token = 0, up_pair = 0;
     u64 up_secret = 0;
     H::NetInfo sta_info{};
     int my_slot = 0;
     u32 my_ip = 0, sta_subnet = 0;
     H::Sock up_udp = H::BadSock;
-    std::thread up_udp_thread;
+    azl::SafeThread up_udp_thread;
     std::atomic<bool> up_udp_run{false}, up_udp_ok{false};
     std::atomic<s64> up_udp_rx_ms{0};
 
@@ -1381,7 +1406,7 @@ private:
     std::array<Station, H::MaxNodes> st;
     std::vector<Pending> pending;
     H::Sock host_udp = H::BadSock;
-    std::thread host_udp_thread;
+    azl::SafeThread host_udp_thread;
     std::atomic<bool> host_udp_run{false};
     Clock::time_point next_register{};
 };
@@ -1401,9 +1426,9 @@ bool Enabled() {
     return !MmjHub::InRoom(); // in a room, the room carries the traffic
 }
 
-void Attach(std::function<void(const WifiPacket&)> deliver, std::function<void()> lost,
+bool Attach(std::function<void(const WifiPacket&)> deliver, std::function<void()> lost,
             std::function<MacAddress()> own_mac) {
-    Get().Attach(std::move(deliver), std::move(lost), std::move(own_mac));
+    return Get().Attach(std::move(deliver), std::move(lost), std::move(own_mac));
 }
 
 void Detach() {

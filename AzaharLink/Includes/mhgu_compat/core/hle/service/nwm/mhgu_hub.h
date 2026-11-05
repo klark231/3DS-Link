@@ -34,7 +34,8 @@ namespace MhguBridge {
 bool Enabled();
 
 /// The UDS service registers how a frame reaches it, what to do when the hub it joined is gone, and its MAC.
-void Attach(std::function<void(const Network::WifiPacket&)> deliver, std::function<void()> lost,
+/// False when the bridge thread could not be started (nothing is attached then, the caller turns crossplay off).
+bool Attach(std::function<void(const Network::WifiPacket&)> deliver, std::function<void()> lost,
             std::function<Network::MacAddress()> own_mac);
 void Detach();
 

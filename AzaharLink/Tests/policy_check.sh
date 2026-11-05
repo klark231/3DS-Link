@@ -44,6 +44,13 @@ need Includes/ctr/plugin.hpp "int rcvbuf_kb = ini::kRcvbufKbDefault;" "the plugi
 need_order Sources/main.cpp "The singleton is built here, on this thread" "Process::SetProcessEventCallback(OnProcessEvent);" "the singleton exists before the event callback can run"
 need Sources/ctr/plugin.cpp "static LazyNew<Plugin> instance;" "Plugin::Get has no function-local static guard (it throws when two threads meet)"
 need Sources/mhgu/mhgu_hub.cpp "static azl::LazyNew<Bridge> bridge;" "the MHGU bridge has no function-local static guard"
+# The MHGU bridge starts its threads through azl::SafeThread: a std::thread that cannot start throws std::system_error, the plugin has no exceptions and the
+# game died in abort() (Luma dumps of 2026-11-05, Bridge::Attach). A refusal makes crossplay stay off, it never aborts.
+need Includes/azl/safe_thread.hpp "class SafeThread" "the bridge's thread type that cannot throw"
+for f in Sources/mhgu/mhgu_hub.cpp Sources/mhgu/mhgu_hub_proto.cpp Sources/ctr/crossplay.cpp; do
+  ! tr -d '\r' < "$f" | grep -v '^ *//' | grep -E 'std::thread( |\(|>)' | grep -v 'this_thread' | grep -q . || fail "$f uses std::thread: use azl::SafeThread (azl/safe_thread.hpp)"
+done
+need Includes/mhgu_compat/core/hle/service/nwm/mhgu_hub.h "bool Attach(" "Attach reports a thread that could not start"
 need ConfigApp/source/settings.hpp "int sleep_stop = azl::ini::kSleepStopDefault;" "the Setup app takes its default from the shared header"
 need ConfigApp/source/settings.hpp "int rcvbuf_kb = azl::ini::kRcvbufKbDefault;" "the Setup app takes its default from the shared header"
 need Includes/ctr/plugin.hpp "int debug = 0;" "the debug capture is off by default"

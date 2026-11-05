@@ -12,6 +12,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include "azl/safe_thread.hpp"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -789,14 +790,19 @@ void HubListing::Run(std::string server) {
                 const Endpoint server_ep = *ep;
                 const std::string k = key;
                 PlayerFn fn = player_fn;
-                std::thread([server_ep, k, ticket, fn] {
+                azl::SafeThread player([server_ep, k, ticket, fn] {
                     Spliced sp;
                     if (AttachTicket(server_ep, k, ticket, sp)) {
                         fn(sp, server_ep);
                     } else {
                         Log("[hub] a player's connection through the hub server failed");
                     }
-                }).detach();
+                });
+                if (player.joinable()) {
+                    player.detach();
+                } else {
+                    Log("[hub] no thread for a player's connection: it is dropped");
+                }
             }
         }
         forget();

@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "azl/safe_thread.hpp"
 #include "azl/uds_frames.hpp" // azl::FindBeaconTags, azl::BeaconTags
 
 // ---- the kit bridge (emulator-side) --------------------------------------------------------
@@ -89,7 +90,7 @@ struct CrossplayBridge::Impl {
     DeliverFn deliver;
     MacFn own_mac;
     TickFn tick;
-    std::thread tick_thread;
+    azl::SafeThread tick_thread;
 };
 
 CrossplayBridge::CrossplayBridge() : impl_(new Impl) {}
@@ -112,7 +113,7 @@ bool CrossplayBridge::Start(const std::string& servers, const std::string& key, 
     Settings::values.mhgu_hub_convert.value = true;
     Settings::values.mhgu_hub_log.value = false;
 
-    Bridge::Attach(
+    const bool attached = Bridge::Attach(
         // hub -> game: a frame to inject into the game's UDS
         [this](const Network::WifiPacket& p) {
             if (impl_->deliver) {
@@ -131,12 +132,21 @@ bool CrossplayBridge::Start(const std::string& servers, const std::string& key, 
             return m;
         });
 
+    if (!attached) {
+        // The bridge thread did not start (Bridge::Attach says why in the log). Not fatal: the plugin goes on without
+        // crossplay instead of the game dying in an uncaught std::system_error.
+        Settings::values.mhgu_hub_enabled.value = false; // (the UDS side must not hand frames to a bridge that is not there)
+        impl_->deliver = nullptr;
+        impl_->own_mac = nullptr;
+        impl_->tick = nullptr;
+        return false;
+    }
     impl_->running = true;
 
     // The room used to tick the engine from its network thread; in crossplay the room is not up, so
     // a thread of our own does it (and gives the client direction its periodic scan).
     if (impl_->tick) {
-        impl_->tick_thread = std::thread([this] {
+        impl_->tick_thread = azl::SafeThread([this] {
             using namespace std::chrono;
             while (impl_->running.load()) {
                 const auto now = duration_cast<milliseconds>(steady_clock::now().time_since_epoch());
@@ -144,6 +154,13 @@ bool CrossplayBridge::Start(const std::string& servers, const std::string& key, 
                 std::this_thread::sleep_for(milliseconds(200));
             }
         });
+        if (!impl_->tick_thread.joinable()) {
+            // Without it nothing ticks the engine: the bridge cannot work. Undo the attach and say so.
+            impl_->running = false;
+            Bridge::Detach();
+            Settings::values.mhgu_hub_enabled.value = false;
+            return false;
+        }
     }
     return true;
 }
