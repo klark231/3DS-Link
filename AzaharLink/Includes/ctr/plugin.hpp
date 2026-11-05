@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "azl/dlp_hub.hpp"
+#include "azl/once.hpp"
 #include "azl/ini_values.hpp"
 #include "azl/link_policy.hpp"
 #include "azl/log_files.hpp"
@@ -173,6 +174,7 @@ public:
     void PostNotification(const std::string& message);
 
 private:
+    friend class ::azl::LazyNew<Plugin>; // Plugin::Get() builds the one instance through LazyNew (azl/once.hpp), which needs the constructor
     Plugin() = default;
 
     /// Where the name shown in the room came from (a stronger source is never replaced by a weaker).
