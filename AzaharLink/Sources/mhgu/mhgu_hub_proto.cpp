@@ -12,6 +12,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include "azl/bridge_sleep.hpp"
 #include "azl/safe_thread.hpp"
 
 #ifdef _WIN32
@@ -714,7 +715,7 @@ void HubListing::Run(std::string server) {
     using Clock = std::chrono::steady_clock;
     auto wait = [this](int ms) {
         for (int t = 0; t < ms && running; t += 100) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            azl::BridgeSleepMs(100);
         }
         return running.load();
     };

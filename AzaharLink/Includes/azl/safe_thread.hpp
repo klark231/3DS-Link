@@ -68,7 +68,7 @@ public:
     template <class F, class = std::enable_if_t<!std::is_same<std::decay_t<F>, SafeThread>::value>>
     explicit SafeThread(F&& fn) {
         std::unique_ptr<platform::Thread> t(new platform::Thread());
-        if (t->Start(std::function<void()>(std::forward<F>(fn)))) { // (logs each refused core itself)
+        if (t->Start(std::function<void()>(std::forward<F>(fn)), platform::kCoreDefault, 0x38)) { // (0x38: below the game's 0x30, never starve it) // (logs each refused core itself)
             thread_ = std::move(t);
         }
     }

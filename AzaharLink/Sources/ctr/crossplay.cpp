@@ -12,6 +12,8 @@
 #include <thread>
 #include <vector>
 
+#include "azl/bridge_sleep.hpp"
+#include "azl/log.hpp"
 #include "azl/safe_thread.hpp"
 #include "azl/uds_frames.hpp" // azl::FindBeaconTags, azl::BeaconTags
 
@@ -32,9 +34,10 @@ namespace MmjHub {
 bool InRoom() {
     return false;
 }
-void Log(int /*level*/, const std::string& /*text*/) {
-    // Routed to the plugin's own log elsewhere if wanted; silent by default to keep this file
-    // free of the 3DS logging headers.
+void Log(int level, const std::string& text) {
+    if (level >= 4) {
+        azl::Log("hub: %s", text.c_str()); // (the bridge's own messages, now in AzaharLink.log)
+    }
 }
 } // namespace MmjHub
 
@@ -103,6 +106,7 @@ bool CrossplayBridge::Start(const std::string& servers, const std::string& key, 
     if (impl_->running) {
         return true;
     }
+    azl::Log("crossplay: Start begins (hubs '%s')", servers.c_str());
     impl_->deliver = std::move(deliver);
     impl_->own_mac = std::move(own_mac);
     impl_->tick = std::move(tick);
@@ -132,6 +136,7 @@ bool CrossplayBridge::Start(const std::string& servers, const std::string& key, 
             return m;
         });
 
+    azl::Log("crossplay: Bridge::Attach -> %s", attached ? "ok" : "FAILED");
     if (!attached) {
         // The bridge thread did not start (Bridge::Attach says why in the log). Not fatal: the plugin goes on without
         // crossplay instead of the game dying in an uncaught std::system_error.
@@ -151,7 +156,7 @@ bool CrossplayBridge::Start(const std::string& servers, const std::string& key, 
             while (impl_->running.load()) {
                 const auto now = duration_cast<milliseconds>(steady_clock::now().time_since_epoch());
                 impl_->tick(static_cast<std::uint64_t>(now.count()));
-                std::this_thread::sleep_for(milliseconds(200));
+                azl::BridgeSleepMs(200);
             }
         });
         if (!impl_->tick_thread.joinable()) {

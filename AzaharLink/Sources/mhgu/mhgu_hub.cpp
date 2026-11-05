@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "azl/bridge_sleep.hpp"
 #include "azl/once.hpp"
 #include "azl/safe_thread.hpp"
 #include "common/logging/log.h"
@@ -71,7 +72,7 @@ struct RngBox {
 
 std::mt19937_64& Rng() {
     static azl::LazyNew<RngBox> box;
-    return box.Get([] { std::this_thread::sleep_for(1ms); }).gen;
+    return box.Get([] { azl::BridgeSleepMs(1); }).gen;
 }
 u32 Rand32() {
     return static_cast<u32>(Rng()());
@@ -160,7 +161,7 @@ public:
         // A refusal can be momentary (the game is starting its own threads): three tries, 100 ms apart.
         for (int attempt = 0; attempt < 3 && !worker.joinable(); attempt++) {
             if (attempt > 0) {
-                std::this_thread::sleep_for(100ms);
+                azl::BridgeSleepMs(100);
             }
             worker = azl::SafeThread([this] { Run(); });
         }
@@ -259,7 +260,9 @@ private:
         auto next_tick = Clock::now();
         while (running) {
             if (tasks.empty()) {
-                task_cv.wait_for(lock, 100ms);
+                lock.unlock();
+                azl::BridgeSleepMs(10); // (was task_cv.wait_for(100ms): returned at once on the console -> busy loop)
+                lock.lock();
             }
             while (!tasks.empty()) {
                 auto t = std::move(tasks.front());
@@ -1152,7 +1155,7 @@ private:
         }
         if (!pending.empty()) { // one at a time: the next one's UDS node depends on this one's
             Post([this, gen, sp, server, hello] {
-                std::this_thread::sleep_for(50ms);
+                azl::BridgeSleepMs(50);
                 HostHello(gen, sp, server, hello);
             });
             return;
@@ -1414,7 +1417,7 @@ private:
 Bridge& Get() {
     // (never destroyed: its threads may still run while the process exits; not a function-local static with a constructor: see azl/once.hpp)
     static azl::LazyNew<Bridge> bridge;
-    return bridge.Get([] { std::this_thread::sleep_for(1ms); });
+    return bridge.Get([] { azl::BridgeSleepMs(1); });
 }
 
 } // namespace
