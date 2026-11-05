@@ -568,8 +568,28 @@ void ProbeInstalledApp(const char* plugin_version_text) {
 Plugin& Plugin::Get() {
     // Never destroyed: static destructors run while the game is being torn down, with the plugin
     // heap and the framework already half gone, and there is nothing worth cleaning up anyway.
-    static Plugin* instance = new Plugin();
-    return *instance;
+    //
+    // NOT `static Plugin* instance = new Plugin();`: that is a thread-safe static, and when a second thread (the framework's keep-alive
+    // thread with a process event, the main thread with EarlyInit) asks for the plugin while the first is still building it, the
+    // first one's __cxa_guard_release has to wake the waiter with a condition-variable broadcast. On the console that call fails,
+    // libstdc++ throws __concurrence_broadcast_error, and this build has no exceptions: terminate -> abort -> svcBreak, at launch,
+    // in every game (Luma dumps of 2026-11-05: abort <- __cxa_guard_release <- Plugin::Get, process Rabbit_R / redgiant / MH3U).
+    // Both atomics are constant-initialized, so there is no guard at all; the thread that loses the race sleeps until the winner is done.
+    static std::atomic<Plugin*> instance{nullptr};
+    static std::atomic<int> building{0};
+    Plugin* ready = instance.load(std::memory_order_acquire);
+    if (ready) {
+        return *ready;
+    }
+    if (building.exchange(1, std::memory_order_acq_rel) == 0) {
+        ready = new Plugin();
+        instance.store(ready, std::memory_order_release);
+        return *ready;
+    }
+    while ((ready = instance.load(std::memory_order_acquire)) == nullptr) {
+        svcSleepThread(1000000LL); // 1 ms: the constructor is short
+    }
+    return *ready;
 }
 
 // ---------------------------------------------------------------------------------------------
