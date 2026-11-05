@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -20,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "azl/once.hpp"
 #include "common/logging/log.h"
 #include "common/settings.h"
 #include "core/hle/service/nwm/mhgu_hub_proto.h"
@@ -52,10 +54,23 @@ constexpr u32 MhxxCommId = 0x00197110;
 constexpr u8 HubChannel = DefaultNetworkChannel;
 constexpr std::size_t MaxBeacons = 14;
 
+// (No std::random_device on the console: its start-up can throw and the plugin has no exceptions; the clock and an address do. And no
+// function-local static with a constructor: its guard throws when two threads meet, see azl/once.hpp.)
+struct RngBox {
+    std::mt19937_64 gen{[] {
+        const u64 now = static_cast<u64>(Clock::now().time_since_epoch().count());
+        int marker = 0;
+#ifdef __3DS__
+        return now ^ (now << 29) ^ static_cast<u64>(reinterpret_cast<std::uintptr_t>(&marker));
+#else
+        return now ^ static_cast<u64>(std::random_device{}()) ^ static_cast<u64>(reinterpret_cast<std::uintptr_t>(&marker));
+#endif
+    }()};
+};
+
 std::mt19937_64& Rng() {
-    static std::mt19937_64 rng{std::random_device{}() ^
-                               static_cast<u64>(Clock::now().time_since_epoch().count())};
-    return rng;
+    static azl::LazyNew<RngBox> box;
+    return box.Get([] { std::this_thread::sleep_for(1ms); }).gen;
 }
 u32 Rand32() {
     return static_cast<u32>(Rng()());
@@ -1372,9 +1387,9 @@ private:
 };
 
 Bridge& Get() {
-    // (never destroyed: its threads may still run while the process exits)
-    static Bridge* bridge = new Bridge;
-    return *bridge;
+    // (never destroyed: its threads may still run while the process exits; not a function-local static with a constructor: see azl/once.hpp)
+    static azl::LazyNew<Bridge> bridge;
+    return bridge.Get([] { std::this_thread::sleep_for(1ms); });
 }
 
 } // namespace

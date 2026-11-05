@@ -486,8 +486,11 @@ void PatchProcess(FwkSettings&) {
     // libctrpf 0.8.0 has no OnProcessExit() hook: the exit event is the only notification. It runs
     // on the framework's tiny keep-alive thread, so it only sets flags (see Plugin::RequestStop);
     // the orderly shutdown happens at the end of main().
+    // The singleton is built here, on this thread, before any other can ask for it: the event callback below runs on the framework's
+    // keep-alive thread and asks for it too (a second thread arriving mid-construction killed the plugin at launch: azl/once.hpp).
+    Plugin& plugin = Plugin::Get();
     Process::SetProcessEventCallback(OnProcessEvent);
-    Plugin::Get().EarlyInit();
+    plugin.EarlyInit();
 }
 
 static void InitMenu(PluginMenu& menu) {

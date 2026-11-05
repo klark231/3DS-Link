@@ -39,6 +39,11 @@ need Includes/azl/ini_values.hpp "constexpr int kSleepStopDefault = 0;" "the sle
 need Includes/azl/ini_values.hpp "constexpr int kRcvbufKbDefault = 64;" "the receive ring is the 64 KB the soc service grants"
 need Includes/ctr/plugin.hpp "int sleep_stop = ini::kSleepStopDefault;" "the plugin takes its default from the shared header"
 need Includes/ctr/plugin.hpp "int rcvbuf_kb = ini::kRcvbufKbDefault;" "the plugin takes its default from the shared header"
+# The plugin singleton is built on PatchProcess's own thread BEFORE the keep-alive thread's event callback can ask for it, and through a guard-free lazy object:
+# a function-local static with a constructor (Plugin::Get) died at launch in every game when two threads met (azl/once.hpp, Luma dumps of 2026-11-05)
+need_order Sources/main.cpp "The singleton is built here, on this thread" "Process::SetProcessEventCallback(OnProcessEvent);" "the singleton exists before the event callback can run"
+need Sources/ctr/plugin.cpp "static LazyNew<Plugin> instance;" "Plugin::Get has no function-local static guard (it throws when two threads meet)"
+need Sources/mhgu/mhgu_hub.cpp "static azl::LazyNew<Bridge> bridge;" "the MHGU bridge has no function-local static guard"
 need ConfigApp/source/settings.hpp "int sleep_stop = azl::ini::kSleepStopDefault;" "the Setup app takes its default from the shared header"
 need ConfigApp/source/settings.hpp "int rcvbuf_kb = azl::ini::kRcvbufKbDefault;" "the Setup app takes its default from the shared header"
 need Includes/ctr/plugin.hpp "int debug = 0;" "the debug capture is off by default"

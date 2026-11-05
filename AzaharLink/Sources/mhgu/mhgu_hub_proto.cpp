@@ -1228,18 +1228,21 @@ std::vector<u8> PiaTranslator::To3ds(std::span<const u8> in) {
 }
 
 // ---- CRC-32 (zlib's) and a friend code seed with a chosen CRC-32
-static const std::array<u32, 256>& CrcTable() {
-    static const std::array<u32, 256> table = [] {
-        std::array<u32, 256> t{};
-        for (u32 i = 0; i < 256; i++) {
-            u32 c = i;
-            for (int k = 0; k < 8; k++) {
-                c = c & 1 ? (c >> 1) ^ 0xEDB88320u : c >> 1;
-            }
-            t[i] = c;
+static constexpr std::array<u32, 256> MakeCrcTable() {
+    std::array<u32, 256> t{};
+    for (u32 i = 0; i < 256; i++) {
+        u32 c = i;
+        for (int k = 0; k < 8; k++) {
+            c = c & 1 ? (c >> 1) ^ 0xEDB88320u : c >> 1;
         }
-        return t;
-    }();
+        t[i] = c;
+    }
+    return t;
+}
+
+// (built by the compiler: a table made at the first call would be a function-local static with a guard, see azl/once.hpp)
+static const std::array<u32, 256>& CrcTable() {
+    static constexpr std::array<u32, 256> table = MakeCrcTable();
     return table;
 }
 

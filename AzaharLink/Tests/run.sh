@@ -145,6 +145,7 @@ g++ $CXXFLAGS -I"$OUT" Tests/plugin_dlp_test.cpp Sources/azl/dlp_hub.cpp Sources
 g++ $CXXFLAGS -ITests/settings_test/shim -IConfigApp/source Tests/settings_test/settings_test.cpp ConfigApp/source/settings.cpp ConfigApp/source/fileio.cpp -o "$OUT/settings_test"
 g++ $CXXFLAGS -IConfigApp/source Tests/settings_test/lobby_json_test.cpp -o "$OUT/lobby_json_test"   # the reader of the public room list (ConfigApp/source/lobby_json.hpp)
 g++ $CXXFLAGS Tests/chat_test.cpp Sources/azl/room_proto.cpp -o "$OUT/chat_test"   # the chat core (Includes/azl/chat.hpp) and its packets
+g++ $CXXFLAGS -fsanitize=thread -fno-sanitize=address,undefined Tests/once_test.cpp -o "$OUT/once_test"   # azl/once.hpp: the lazy singleton without a static guard
 # TitleShare's own C files (the vendored copies): the app's keyed reading of a game's icon (ncch_icon_test) and its SHA-256 (paths.cpp) use them
 for f in aes sdcrypt sha256 contentpath ncchname; do
   gcc -O1 -g -w -c ConfigApp/titleshare/common/$f.c -o "$OUT/ts_$f.o"
@@ -234,6 +235,7 @@ if [ -z "$BUILD_ONLY" ]; then
   "$OUT/settings_test"
   "$OUT/lobby_json_test"
   "$OUT/chat_test"
+  "$OUT/once_test"
   "$OUT/games_test"
   "$OUT/paths_test"
   "$OUT/plugin_install_test"
