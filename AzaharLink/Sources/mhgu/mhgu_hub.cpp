@@ -330,6 +330,17 @@ private:
             LOG_WARNING(Service_NWM, "[hub] the game did not finish connecting to the hub");
             sta = Sta::Idle;
         }
+        // Keep the hub list warm while idle so the first in-game search already has results.
+        // (Azahar does this; the port had lost it: the list was only asked for AFTER the first search, so that search was empty.)
+        if (!hosting && sta == Sta::Idle && !list_pending && now - last_list > 5s) {
+            RequestList();
+        }
+        // Pre-fill the game's beacon buffer every tick while it can scan, so the FIRST search already shows hubs
+        // (RecvBeaconBroadcastData reads the buffer right after triggering Scan(), before the per-scan delivery
+        // Scan() posts to this worker would run).
+        if (!hosting && sta == Sta::Idle && !listed.empty()) {
+            DeliverBeacons();
+        }
         // host: players announced by the server whose UDS join didn't finish
         for (auto it = pending.begin(); it != pending.end();) {
             if (now - it->start > 4s) {
@@ -462,11 +473,13 @@ private:
             std::vector<H::ServerState> states(servers.size(), H::ServerState::NoAnswer);
             std::vector<azl::SafeThread> ts;
             for (std::size_t i = 0; i < servers.size(); i++) {
-                const std::function<void()> ask = [&, i] { states[i] = H::ListHubs(servers[i], key, 1500, found[i]); };
-                ts.emplace_back(ask);
-                if (!ts.back().joinable()) {
-                    ask(); // no thread for this server: ask it here (slower, but the list still comes)
-                }
+                // (one server after the other, in this thread: every thread costs one of the game's 36 slots)
+                states[i] = H::ListHubs(servers[i], key, 1500, found[i]);
+                static const char* const kState[] = {"online", "DNS failed (name not found)", "TCP connect failed/timed out",
+                                                     "connected but no answer", "refused (wrong key?)"};
+                const int st = static_cast<int>(states[i]);
+                LOG_INFO(Service_NWM, "[hub] list {}: {} -> {} room(s)", servers[i], st >= 0 && st < 5 ? kState[st] : "?",
+                         found[i].size());
             }
             for (auto& t : ts) {
                 t.join();
@@ -495,7 +508,20 @@ private:
     void OnList(std::vector<H::ListedHub> hubs) {
         list_pending = false;
         std::vector<Listed> next;
+        {
+            static std::size_t last_raw = static_cast<std::size_t>(-1);
+            if (hubs.size() != last_raw) {
+                last_raw = hubs.size();
+                LOG_INFO(Service_NWM, "[hub] the servers sent {} room(s)", hubs.size());
+            }
+        }
         for (auto& h : hubs) {
+            if (H::Rd64(&h.info[H::NI::LocalCommId]) != H::MhguLocalCommId || !H::InfoSane(h.info) ||
+                h.info[H::NI::AcceptPolicy] == 1 || h.info[H::NI::NodeCount] >= h.info[H::NI::NodeMax]) {
+                LOG_INFO(Service_NWM, "[hub] room {:016x} skipped: commid {:016x} sane {} policy {} nodes {}/{}", h.id,
+                         H::Rd64(&h.info[H::NI::LocalCommId]), H::InfoSane(h.info) ? 1 : 0, h.info[H::NI::AcceptPolicy],
+                         h.info[H::NI::NodeCount], h.info[H::NI::NodeMax]);
+            }
             if (H::Rd64(&h.info[H::NI::LocalCommId]) != H::MhguLocalCommId || !H::InfoSane(h.info) ||
                 h.info[H::NI::AcceptPolicy] == 1 || h.info[H::NI::NodeCount] >= h.info[H::NI::NodeMax]) {
                 continue;
