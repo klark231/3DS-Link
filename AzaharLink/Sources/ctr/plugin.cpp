@@ -1876,6 +1876,21 @@ void Plugin::EarlyInit() {
         return room_->joined() ? room_->mac() : console_mac_;
     };
     engine_.reset(new UdsEngine(&kernel_, transport));
+    if (config_.crossplay) {
+        // The game searches: tell the MHGU bridge which game's networks (wlancommid / id8) it asks for, so the hubs on the hub
+        // servers come back as beacons that scan keeps (stamped with other ids, the engine's scan filter drops them).
+        engine_->SetScanHook([this](u32 comm_id, u8 id8) {
+            crossplay_scan_comm_.store(comm_id);
+            crossplay_scan_id_.store(id8);
+            static unsigned logged;
+            if (++logged <= 5) {
+                Log("crossplay: the game scans for %08lx/%02x", static_cast<unsigned long>(comm_id), id8);
+            }
+            if (crossplay_) {
+                crossplay_->Scan(comm_id, id8);
+            }
+        });
+    }
     if (config_.cross_region) {
         engine_->SetScanFilterEnforced(false); // cross-region: list other-region lobbies of this game (in a mixed room, other games too)
     }
@@ -2612,6 +2627,10 @@ bool Plugin::LoadConfig() {
             config_.rcvbuf_kb = ini::RcvbufKb(value); // (checked where it is used)
         } else if (key == "sleep_stop") {
             config_.sleep_stop = ini::SleepStop(value); // (0, 1, 2: see azl/ini_values.hpp)
+        } else if (key == "hub_a") {
+            config_.hub_a = ini::HubName(value); // (crossplay: an empty one is a hub left out; both empty = the two defaults)
+        } else if (key == "hub_b") {
+            config_.hub_b = ini::HubName(value);
         }
     }
     // The room the ini holds is the one SaveConfig writes back: a room picked in the browser (SwitchRoom) changes the
@@ -2623,7 +2642,7 @@ bool Plugin::LoadConfig() {
 }
 
 bool Plugin::SaveConfig() {
-    // All 15 keys, always, in the order the Setup app writes them (ini::Render is the one writer of both): a file made by the
+    // All 19 keys, always, in the order the Setup app writes them (ini::Render is the one writer of both): a file made by the
     // plugin can be edited by hand without knowing which keys exist. The advanced ones, rcvbuf_kb and sleep_stop, used to be
     // written only when they differed from the default, so a file never showed them.
     ini::Fields fields;
@@ -2644,6 +2663,8 @@ bool Plugin::SaveConfig() {
     fields.debug = config_.debug;
     fields.rcvbuf_kb = config_.rcvbuf_kb;
     fields.sleep_stop = config_.sleep_stop;
+    fields.hub_a = config_.hub_a;
+    fields.hub_b = config_.hub_b;
     const std::string text = ini::Render(fields);
 
     File file;
@@ -2692,18 +2713,17 @@ bool Plugin::Connect() {
             PostNotification(SocketInitFailure());
             return false;
         }
-        // config_.host holds the hub servers in this mode (space/comma list); empty = the defaults.
-        const std::string servers =
-            config_.host.empty()
-                ? std::string("hunterhubid-gu-hub.duckdns.org morerokk-mhgurecomp-ldnserver.duckdns.org")
-                : config_.host;
+        // The hub servers of this mode are hub_a and hub_b of the ini (both set by default, changeable in the Setup app); the room
+        // address (host) is not touched. Both empty = the two defaults.
+        const std::string servers = ini::HubServers(config_.hub_a, config_.hub_b);
         const bool ok = crossplay_ && crossplay_->Start(
             servers, config_.password,
             [this](const azl::WifiPacket& p) { engine_->OnWifiPacket(p); }, // hub -> game
             [this]() { return console_mac_; },
             [this](u64 now_ms) {
                 engine_->Tick(now_ms);
-                crossplay_->Scan(0, 0); // keep the hub list warm so a search finds MHGU rooms
+                // keep the hub list warm so a search finds MHGU rooms, with the ids of the game's last scan
+                crossplay_->Scan(crossplay_scan_comm_.load(), static_cast<std::uint8_t>(crossplay_scan_id_.load()));
             });
         Log("crossplay: %s -> MHGU hub (%s)", ok ? "bridging local play" : "could not start",
             servers.c_str());

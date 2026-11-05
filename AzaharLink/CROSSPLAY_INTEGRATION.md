@@ -103,3 +103,19 @@ a title's lobby), then the hubs arrive as beacons via the deliver callback.
 
 The wrapper (`crossplay.hpp`/`.cpp`) is done and validated; everything above is wiring + the one
 socket/scan unknown that only a console build will settle.
+
+---
+
+## Hub servers (added)
+
+Crossplay now has its own two hub servers, separate from the room address (`host`):
+
+| ini key | default |
+|---|---|
+| `hub_a` | `hunterhubid-gu-hub.duckdns.org` |
+| `hub_b` | `morerokk-mhgurecomp-ldnserver.duckdns.org` |
+
+Same two servers as AzaharPlus's `mhgu_hub_servers`. The plugin passes `hub_a hub_b` to the bridge, which lists
+hubs on both servers at once and advertises a hosted room on both. In the ConfigApp: **Settings -> Hub server A / B**
+(A = keyboard; empty = that server is off; `*` = back to the default; both empty = the two defaults).
+A name may carry a port (`name:port`). `password` is still the matchmaking key.

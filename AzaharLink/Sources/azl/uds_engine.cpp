@@ -2166,6 +2166,10 @@ void UdsEngine::SetScanFilterEnforced(bool enforced) {
     scan_filter_enforced_ = enforced;
 }
 
+void UdsEngine::SetScanHook(ScanHook hook) {
+    scan_hook_ = std::move(hook);
+}
+
 void UdsEngine::WaitForScan(const ScanParams& scan, u64 window_ms) {
     const u64 started = platform::NowMs();
     u64 asked = 0; // what was asked of the kernel: a test kernel that does not sleep still gets to the end
@@ -2193,6 +2197,9 @@ u32 UdsEngine::ScanBeacons(u32 command, u8* out, u32 out_size, const ScanParams&
     // same, with mu_ free (the room thread keeps handing beacons in), and only then look at what was
     // heard: the beacon of a host is repeated every 102 ms, so one that was heard in the interval
     // before the scan started counts too. Nothing is consumed: the next scan hears the host again.
+    if (scan_hook_) {
+        scan_hook_(scan.wlan_comm_id, scan.id8); // (crossplay: the hubs are announced with the ids this scan asks for)
+    }
     const u64 started = platform::NowMs();
     const u64 window = std::min<u64>(
         static_cast<u64>(__builtin_popcount(scan.channel_mask & kScanChannelBits)) * scan.dwell_ms,

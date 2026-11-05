@@ -155,6 +155,22 @@ protected:
                          "OFF: normal 3DS Link (join an Azahar room).";
         add(crossplay);
 
+        // The two MHGU hub servers crossplay connects to (ini keys hub_a, hub_b). A or right opens the keyboard.
+        const auto hub_row = [&](int id, const char* label, const std::string& name) {
+            Row r;
+            r.id = id;
+            r.kind = Kind::Value;
+            r.label = label;
+            r.value = name.empty() ? std::string("(not used)") : name;
+            r.note_title = label;
+            r.note = "An MHGU hub server for MHGU Crossplay (a host name, or name:port). 3DS Link talks to both hub \
+servers at once, so rooms from either show up and the room you host is listed on both. Empty = this server is not used; \
+both empty = the two default servers. A = edit.";
+            add(r);
+        };
+        hub_row(kHubA, "Hub server A", g.cfg.hub_a);
+        hub_row(kHubB, "Hub server B", g.cfg.hub_b);
+
         Row cross_region;
         cross_region.id = kCrossRegion;
         cross_region.kind = Kind::Toggle;
@@ -301,6 +317,16 @@ protected:
                 g.Save();
             }
             break;
+        case kHubA:
+            if (step == 0) {
+                EditHub("Hub server A", g.cfg.hub_a, azl::ini::kHubDefaultA);
+            }
+            break;
+        case kHubB:
+            if (step == 0) {
+                EditHub("Hub server B", g.cfg.hub_b, azl::ini::kHubDefaultB);
+            }
+            break;
         case kCrossRegion:
             if (SetSwitch(g.cfg.cross_region, step)) {
                 g.Save();
@@ -381,7 +407,7 @@ protected:
     }
 
 private:
-    enum Id { kAutoconnect = 1, kRadio, kSleep, kDebug, kMenu, kTest, kCheck, kAbout, kNickname, kDlpDelivery, kCheckUpdates, kUpdateAtStart, kCrossplay, kCrossRegion };
+    enum Id { kAutoconnect = 1, kRadio, kSleep, kDebug, kMenu, kTest, kCheck, kAbout, kNickname, kDlpDelivery, kCheckUpdates, kUpdateAtStart, kCrossplay, kCrossRegion, kHubA, kHubB };
 
     void EditNickname() {
         std::string input = g.cfg.nickname;
@@ -395,6 +421,30 @@ private:
         } else {
             g.ShowToast("Invalid nickname: 4-20 chars, A-Z a-z 0-9 space . _ -", col::kOff, 5000);
         }
+    }
+
+    // The keyboard for one hub server: letters, digits and . - _ : only (a host name, with a port if it has one). Empty is allowed
+    // (that server is left out). The two defaults come back when the text is a lone "*".
+    void EditHub(const char* title, std::string& slot, const char* default_name) {
+        std::string input = slot;
+        const std::string hint = std::string(title) + " (empty = off, * = default)";
+        if (!g.EditText(hint.c_str(), input, static_cast<int>(azl::ini::kHubNameMax), true)) {
+            return;
+        }
+        input = azl::ini::HubName(TrimSpaces(input));
+        if (input == "*") {
+            input = default_name;
+        }
+        for (char c : input) {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' ||
+                            c == '_' || c == ':';
+            if (!ok) {
+                g.ShowToast("Invalid hub name: A-Z a-z 0-9 . - _ : only", col::kOff, 5000);
+                return;
+            }
+        }
+        slot = input;
+        g.Save();
     }
 
     // A flips the switch, D-pad right sets it ON, left OFF. True when it changed.

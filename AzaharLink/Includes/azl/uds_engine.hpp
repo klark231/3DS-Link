@@ -113,6 +113,11 @@ public:
     /// beacons of its hosts, spec C7, and the count-only mode let the game list the emulator's Tekken lobby in the same
     /// room and join it, in a loop). Off: they are only counted and logged (the tests keep that mode).
     void SetScanFilterEnforced(bool enforced);
+    /// Called at the start of every scan the game makes (RecvBeaconBroadcastData / ScanOnConnection) with the wlancommid and id8
+    /// it asks for, on the game's thread with no lock held. Crossplay uses it to tell the MHGU bridge what the game searches for,
+    /// so the hubs it lists are announced as beacons this very scan keeps. Set it once, before the game runs.
+    using ScanHook = std::function<void(u32 wlan_comm_id, u8 id8)>;
+    void SetScanHook(ScanHook hook);
 
     u32 SetApplicationData(const u8* data, u32 size);
     /// Copies up to `capacity` bytes; `*actual` is 0 if the game's buffer is too small.
@@ -502,6 +507,7 @@ private:
         u64 rx_ms;
     };
     std::list<HeardBeacon> received_beacons_;
+    ScanHook scan_hook_;
     bool scan_filter_enforced_ = true; // on by default (2026-10-20: off, NSMB2 joined the room's Tekken lobby in a loop). The plugin turns it off for this game's session when the cross_region toggle is on (SetScanFilterEnforced)
 
     u32 connection_status_event_ = 0; // engine-owned, persistent

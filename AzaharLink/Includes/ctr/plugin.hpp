@@ -54,6 +54,8 @@ struct Config {
     int debug = 0;                        ///< 0 no log at all (no file is written), 1 everything (an old 2 reads as 1)
     int rcvbuf_kb = ini::kRcvbufKbDefault; ///< ini key rcvbuf_kb: 8, 16, 32 or 64; it can only LOWER the receive ring
     int sleep_stop = ini::kSleepStopDefault; ///< ini key sleep_stop: 0 the sleep is only logged, 1 it ends the session of a client, 2 of a host too (see OnSleepEnter)
+    std::string hub_a = ini::kHubDefaultA; ///< ini key hub_a: first MHGU hub server of crossplay mode (empty = not used)
+    std::string hub_b = ini::kHubDefaultB; ///< ini key hub_b: second MHGU hub server of crossplay mode (empty = not used)
 };
 
 class Plugin {
@@ -265,6 +267,8 @@ private:
 
     CtrKernelOps kernel_;
     std::unique_ptr<RoomClient> room_;
+    std::atomic<u32> crossplay_scan_comm_{0}; ///< the wlancommid of the game's last scan (0: it has not scanned yet)
+    std::atomic<u32> crossplay_scan_id_{0};   ///< its id8
     std::unique_ptr<azlx::CrossplayBridge> crossplay_; ///< drives the MHGU hub when config_.crossplay
     std::unique_ptr<UdsEngine> engine_;
     std::unique_ptr<UdsHle> hle_;

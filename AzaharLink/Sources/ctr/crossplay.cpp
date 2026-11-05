@@ -183,6 +183,13 @@ void CrossplayBridge::Scan(std::uint32_t wlan_comm_id, std::uint8_t id) {
     if (!impl_->running) {
         return;
     }
+    // A game that scans for any network sends 0xFFFFFFFF / 0xFF: the bridge takes 0 (MHXX's own ids).
+    if (wlan_comm_id == 0xFFFFFFFFu) {
+        wlan_comm_id = 0;
+    }
+    if (id == 0xFF) {
+        id = 0;
+    }
     Bridge::Scan(wlan_comm_id, id);
 }
 

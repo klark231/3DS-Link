@@ -55,14 +55,14 @@ tr -d '\r' < README.md | grep -q "^| \`sleep_stop\` | $SLEEP_DEFAULT |" || fail 
 # No knob beyond these (a new ini key is a decision, not a side effect). They are 15: the 13 of 0.1.14 plus
 # rcvbuf_kb and sleep_stop. menu_key and debug are old keys: 0.1.15 only gave them values (menu_key=off, debug 0 or 1).
 KEYS=$(tr -d '\r' < Sources/ctr/plugin.cpp | grep -o 'key == "[a-z_]*"' | sed 's/key == "//; s/"//' | sort | tr '\n' ' ')
-WANTED="autoconnect cross_region crossplay debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
+WANTED="autoconnect cross_region crossplay debug enabled game_name host hub_a hub_b menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
 [ "$KEYS" = "$WANTED" ] || fail "the ini keys read by the plugin are '$KEYS', expected '$WANTED'"
 
 # Both programs write all 15 keys, in one place: they fill every field of ini::Fields and call ini::Render, which writes the 15
 # lines (a writer that forgets a key, or a third writer with its own list, fails here). Before 0.1.16 the plugin left out
 # rcvbuf_kb and sleep_stop unless they were set and the app did not know them: a file made by either had no line for them and a
 # hand edit needed the key names.
-FIELDS="autoconnect cross_region crossplay debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
+FIELDS="autoconnect cross_region crossplay debug enabled game_name host hub_a hub_b menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
 for f in Sources/ctr/plugin.cpp ConfigApp/source/settings.cpp; do
   GOT=$(tr -d '\r' < "$f" | grep -o 'fields\.[a-z_]* = ' | sed 's/fields\.//; s/ = //' | sort -u | tr '\n' ' ')
   [ "$GOT" = "$FIELDS" ] || fail "$f fills the ini fields '$GOT', expected '$FIELDS'"

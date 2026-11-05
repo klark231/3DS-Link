@@ -221,6 +221,10 @@ LoadResult LoadSettings(Settings& cfg) {
             cfg.rcvbuf_kb = azl::ini::RcvbufKb(value);
         } else if (key == "sleep_stop") {
             cfg.sleep_stop = azl::ini::SleepStop(value);
+        } else if (key == "hub_a") {
+            cfg.hub_a = azl::ini::HubName(value);
+        } else if (key == "hub_b") {
+            cfg.hub_b = azl::ini::HubName(value);
         } else if (cfg.unknown_lines.size() < kMaxUnknownLines && l.size() <= kMaxUnknownLineLen) {
             cfg.unknown_lines.push_back(l);
         }
@@ -259,6 +263,8 @@ bool SaveSettings(const Settings& cfg) {
     fields.debug = cfg.debug;
     fields.rcvbuf_kb = cfg.rcvbuf_kb;
     fields.sleep_stop = cfg.sleep_stop;
+    fields.hub_a = cfg.hub_a;
+    fields.hub_b = cfg.hub_b;
     std::vector<std::string> extra;
     for (const std::string& line : cfg.unknown_lines) {
         if (line.size() <= kMaxUnknownLineLen) {

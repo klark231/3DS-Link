@@ -45,6 +45,8 @@ struct Settings {
     std::string game_name;
     int debug = 0; // 0 no log at all (no file is written), 1 everything (AzaharLink.log + AzaharLink.debug.log); a 2 reads as 1
     int rcvbuf_kb = azl::ini::kRcvbufKbDefault; // not shown by the app (an advanced fallback: 8, 16, 32 or 64), but a field of its own: it is written, never lost
+    std::string hub_a = azl::ini::kHubDefaultA; // crossplay: first MHGU hub server (the row "Hub server A")
+    std::string hub_b = azl::ini::kHubDefaultB; // crossplay: second MHGU hub server (the row "Hub server B")
     int sleep_stop = azl::ini::kSleepStopDefault; // the row "End session on sleep": 0 off, 1 a client, 2 a host too
     std::vector<std::string> unknown_lines;
     unsigned keys_seen = 0; // not in the file: bit i = the key azl::ini::kKeyNames[i] was in the file that LoadSettings read
