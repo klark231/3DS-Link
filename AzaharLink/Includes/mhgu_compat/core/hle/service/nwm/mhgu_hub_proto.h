@@ -14,6 +14,7 @@
 #pragma once
 
 #include <array>
+#include "azl/safe_thread.hpp"
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -207,7 +208,7 @@ private:
     std::string key;
     InfoFn info_fn;
     PlayerFn player_fn;
-    std::vector<std::thread> threads;
+    std::vector<azl::SafeThread> threads; // (never a raw std::thread: it throws when the console refuses a thread)
     std::mutex socks_mutex;
     std::vector<Sock> socks; // open server connections (closed by Stop)
 };

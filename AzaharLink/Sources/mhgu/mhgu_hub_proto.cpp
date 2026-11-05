@@ -681,6 +681,10 @@ void HubListing::Start(const std::vector<std::string>& servers, const std::strin
     running = true;
     for (const auto& s : servers) {
         threads.emplace_back([this, s] { Run(s); });
+        if (!threads.back().joinable()) {
+            // The console refused a thread (the game keeps most of the 36 the process may have): skip this server.
+            threads.pop_back();
+        }
     }
 }
 

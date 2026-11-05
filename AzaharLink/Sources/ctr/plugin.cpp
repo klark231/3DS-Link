@@ -2884,7 +2884,7 @@ bool Plugin::Tick(bool want_connected) {
             PostNotification(want_connected ? "Switching room..." : "Room chosen: switch 'Connect to room' on to join it");
         }
     }
-    if (config_.host.empty() && menu_off() && (last_hint_ms_ == 0 || now - last_hint_ms_ >= kHintIntervalMs)) {
+    if (config_.host.empty() && !config_.crossplay && menu_off() && (last_hint_ms_ == 0 || now - last_hint_ms_ >= kHintIntervalMs)) {
         // With the in-game menu off the address can only come from the settings: say so, now and once a minute,
         // instead of sitting idle (a message at launch is easily missed behind the game's loading screens).
         last_hint_ms_ = now;
@@ -2957,7 +2957,7 @@ bool Plugin::Tick(bool want_connected) {
     if (step.connect && !Connect()) {
         // Not having an address, or a network layer that will not start after a few tries, is not going to fix
         // itself: stop instead of retrying (and nagging) forever.
-        const bool has_host = !config_.host.empty();
+        const bool has_host = !config_.host.empty() || config_.crossplay; // (crossplay needs no room address)
         if (!rejoin_.AttemptFailed(has_host) && has_host) {
             PostNotification("Network unavailable: giving up after several failed tries");
         }
