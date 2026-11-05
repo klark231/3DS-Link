@@ -670,7 +670,7 @@ need diag/build_diag.sh "sed -i 's/-DAZL_USE_CTRPF/-DAZL_USE_CTRPF -DAZL_BOOT_DI
 # The in-game menu switch: menu_key=off (or none) vetoes every opening, and nothing waits for the menu to join the room
 need Sources/main.cpp "g_menu_off = plugin.menu_off();" "main reads the switch"
 tr -d '\r' < Sources/main.cpp | grep -A2 "static bool OnMenuOpening" | grep -q "if (g_menu_off) {" || fail "OnMenuOpening does not veto first when the menu is off"
-need Sources/main.cpp "if ((cfg.autoconnect || g_menu_off) && !cfg.host.empty()) {" "with the menu off the room is joined at start whatever autoconnect says"
+need Sources/main.cpp "if ((cfg.autoconnect || g_menu_off) && (!cfg.host.empty() || cfg.crossplay)) {" "with the menu off the room is joined at start whatever autoconnect says"
 need Includes/azl/ini_values.hpp 'return word == "off" || word == "none";' "off and none switch the menu off"
 
 # The scan filter is on by default. The plugin may turn it OFF only behind the cross_region toggle: exactly one
