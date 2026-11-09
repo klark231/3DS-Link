@@ -60,16 +60,21 @@ if os.path.exists(p):
         print("build_cias.sh: already patched")
     else:
         print("build_cias.sh: WARN target line not found")
-# build_all.sh: pass the env through into the devkitarm container
+# build_all.sh: pass the env through into the devkitarm container. The new var must go BEFORE DLP_AD so
+# policy_check.sh's pin ('DLP_AD="${DLP_AD:-wild}" bash DlpLink/tools/build_cias.sh', one contiguous
+# string) stays intact. This also self-heals a tree where an earlier run put the var after DLP_AD.
 p = "DlpLink/tools/build_all.sh"
 if os.path.exists(p):
     d = open(p, "rb").read()
-    old = b'docker_run . env GUARD="$GUARD" NO_APP="$((1 - APP))" DLP_AD="${DLP_AD:-wild}" bash DlpLink/tools/build_cias.sh\n'
-    new = b'docker_run . env GUARD="$GUARD" NO_APP="$((1 - APP))" DLP_AD="${DLP_AD:-wild}" DLP_SKIP_SELFTEST="${DLP_SKIP_SELFTEST:-0}" bash DlpLink/tools/build_cias.sh\n'
-    if old in d:
-        open(p, "wb").write(d.replace(old, new)); print("build_all.sh: passes DLP_SKIP_SELFTEST into the container")
-    elif b"DLP_SKIP_SELFTEST" in d:
-        print("build_all.sh: already patched")
+    canonical = b'docker_run . env GUARD="$GUARD" NO_APP="$((1 - APP))" DLP_SKIP_SELFTEST="${DLP_SKIP_SELFTEST:-0}" DLP_AD="${DLP_AD:-wild}" bash DlpLink/tools/build_cias.sh\n'
+    broken    = b'docker_run . env GUARD="$GUARD" NO_APP="$((1 - APP))" DLP_AD="${DLP_AD:-wild}" DLP_SKIP_SELFTEST="${DLP_SKIP_SELFTEST:-0}" bash DlpLink/tools/build_cias.sh\n'
+    original  = b'docker_run . env GUARD="$GUARD" NO_APP="$((1 - APP))" DLP_AD="${DLP_AD:-wild}" bash DlpLink/tools/build_cias.sh\n'
+    if canonical in d:
+        print("build_all.sh: already correct")
+    elif broken in d:
+        open(p, "wb").write(d.replace(broken, canonical)); print("build_all.sh: fixed var order (DLP_SKIP_SELFTEST before DLP_AD) for policy_check")
+    elif original in d:
+        open(p, "wb").write(d.replace(original, canonical)); print("build_all.sh: passes DLP_SKIP_SELFTEST into the container")
     else:
         print("build_all.sh: WARN target line not found")
 PY

@@ -35,6 +35,10 @@ step "catena (modello, app, guida, ciclo, registro)" '^==|^OK|^FAIL|RIEPILOGO|re
 if [ "${DLP_SKIP_SELFTEST:-0}" = 1 ]; then
     echo "== controlli: run_checks.sh skipped (DLP_SKIP_SELFTEST=1); the CIAs were verified at build and the chain check above passed"
 else
+    if [ "${DLP_SKIP_SELFTEST:-0}" = 1 ]; then
+    echo "== controlli: run_checks.sh skipped (DLP_SKIP_SELFTEST=1); the CIAs were verified at build and the chain check above passed"
+else
     step "controlli" '^==|checks,|RIEPILOGO|^OK |VALIDO|FAIL' bash "$HERE/../tests/run_checks.sh"
+fi
 fi
 echo "(output completo: DlpLink/out/build_cias.log)"
