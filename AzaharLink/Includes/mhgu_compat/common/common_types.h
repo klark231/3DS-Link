@@ -35,17 +35,13 @@
 
 typedef std::uint8_t u8;   ///< 8-bit unsigned byte
 typedef std::uint16_t u16; ///< 16-bit unsigned short
-// u32/s32 are int-ranked on purpose: on devkitARM std::uint32_t is 'unsigned long', which leaves a
-// swap_struct->int conversion ambiguous (no exact match) and makes %x warn. 'unsigned int'/'int' are
-// 32-bit on every target we build for (host x86-64 and ARM32) and match AzaharPlus's own types on PC.
-typedef unsigned int u32;  ///< 32-bit unsigned word (int rank)
+typedef std::uint32_t u32; ///< 32-bit unsigned word
 typedef std::uint64_t u64; ///< 64-bit unsigned int
 
 typedef std::int8_t s8;   ///< 8-bit signed byte
 typedef std::int16_t s16; ///< 16-bit signed short
-typedef int s32;          ///< 32-bit signed word (int rank)
+typedef std::int32_t s32; ///< 32-bit signed word
 typedef std::int64_t s64; ///< 64-bit signed int
-static_assert(sizeof(u32) == 4 && sizeof(s32) == 4, "u32/s32 must stay 32-bit");
 
 typedef float f32;  ///< 32-bit floating point
 typedef double f64; ///< 64-bit floating point

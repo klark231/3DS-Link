@@ -33,7 +33,6 @@
 #include "network/network.h"
 #include "network/room_member.h"
 
-// 3DS-Link integration point (defined in Sources/ctr/crossplay.cpp): "am I in an Azahar room?".
 namespace MmjHub {
 bool InRoom();
 }
