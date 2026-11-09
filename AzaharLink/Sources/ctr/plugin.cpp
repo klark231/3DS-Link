@@ -17,6 +17,7 @@
 #include "azl/plugin_compare.hpp"
 #include "azl/rcvbuf.h"
 #include "azl/soc_plan.hpp"
+#include "azl/once.hpp"
 #include "azl/stats.hpp"
 #include "azl/swap_gate.hpp"
 #include "azl/text_wrap.hpp"
@@ -25,6 +26,7 @@
 #include "ctr/boot_diag.hpp"
 #include "ctr/gate_page.hpp"
 #include "ctr/input_mirror.hpp"
+
 #include "ctr/soc.hpp"
 #include "ctr/swap_gate.hpp"
 #include "ctr/teardown.hpp"
@@ -611,8 +613,10 @@ void ProbeInstalledApp(const char* plugin_version_text) {
 Plugin& Plugin::Get() {
     // Never destroyed: static destructors run while the game is being torn down, with the plugin
     // heap and the framework already half gone, and there is nothing worth cleaning up anyway.
-    static Plugin* instance = new Plugin();
-    return *instance;
+    // Not `static Plugin* instance = new Plugin();` (a thread-safe static: the framework's keep-alive thread and the main thread both
+    // ask for it at launch, and the guard's wake-up throws on the console, see azl/once.hpp): PatchProcess builds it first, on its own thread.
+    static LazyNew<Plugin> instance;
+    return instance.Get([] { svcSleepThread(1000000LL); });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2236,17 +2240,50 @@ void Plugin::EarlyInit() {
     }
 
     room_.reset(new RoomClient());
+    if (config_.crossplay) {
+        crossplay_.reset(new azlx::CrossplayBridge());
+    }
 
     UdsEngine::Transport transport;
     transport.send = [this](WifiPacket& packet) {
+        if (config_.crossplay) {
+            packet.transmitter_address = console_mac_;
+            if (crossplay_) {
+                crossplay_->SendFrame(packet); // beacon -> hub listing, the rest -> the hub
+            }
+            return;
+        }
         if (!room_->joined()) {
             return; // not in a room: frames go nowhere, like an emulator without a connection
         }
         packet.transmitter_address = room_->mac();
         room_->SendWifiPacket(packet);
     };
-    transport.get_mac = [this]() { return room_->joined() ? room_->mac() : console_mac_; };
+    transport.get_mac = [this]() {
+        if (config_.crossplay) {
+            return console_mac_;
+        }
+        return room_->joined() ? room_->mac() : console_mac_;
+    };
     engine_.reset(new UdsEngine(&kernel_, transport));
+    if (config_.crossplay) {
+        // The game searches: tell the MHGU bridge which game's networks (wlancommid / id8) it asks for, so the hubs on the hub
+        // servers come back as beacons that scan keeps (stamped with other ids, the engine's scan filter drops them).
+        engine_->SetScanHook([this](u32 comm_id, u8 id8) {
+            crossplay_scan_comm_.store(comm_id);
+            crossplay_scan_id_.store(id8);
+            static unsigned logged;
+            if (++logged <= 5) {
+                Log("crossplay: the game scans for %08lx/%02x", static_cast<unsigned long>(comm_id), id8);
+            }
+            if (crossplay_) {
+                crossplay_->Scan(comm_id, id8);
+            }
+        });
+    }
+    if (config_.cross_region) {
+        engine_->SetScanFilterEnforced(false); // cross-region: list other-region lobbies of this game (in a mixed room, other games too)
+    }
     hle_.reset(new UdsHle(engine_.get()));
     hle_->SetDlpProbeFake(AsksDlpOnlyForTheWireless(game_id_));
     if (DlpModeOf(game_id_) == DlpGameMode::Lobby && active_) {
@@ -2282,6 +2319,7 @@ void Plugin::EarlyInit() {
     // makes nothing either: the chat's default is on, but the file may say chat=0 - LateInit reads it again and wires the chat then)
     if (config_read_early && config_.chat) {
         WireChat(true);
+
     }
     room_->SetStateCallback([this](RoomClient::State state, RoomClient::Error error) {
         Log("room: %s%s%s", RoomClient::StateName(state),
@@ -2724,6 +2762,7 @@ void Plugin::OnSleepEnter() {
     if (engine_->StopService(kServiceSleep)) {
         session_dropped_.store(true); // (a session was up)
     }
+    chat_overlay::Detach();
     room_->RequestStop(true); // (the network thread sends what is queued, a Deauthentication among it, and leaves)
 }
 
@@ -2849,6 +2888,7 @@ void Plugin::RequestStop() {
     // Called from the framework's exit event on a very small stack: flag stores only.
     shutting_down_.store(true);
     BeginTeardown();
+    chat_overlay::Detach(); // stop the overlay's threads here: at process exit __libc_fini_array would Join the event thread, which can block (hidWaitForEvent)
     if (room_) {
         room_->RequestStop(true);
     }
@@ -2867,6 +2907,7 @@ void Plugin::Shutdown() {
     shut_down_ = true;
     shutting_down_.store(true);
     OpenSwapGate(); // (a thread stopped at the gate could never be joined)
+    chat_overlay::Detach(); // idempotent: safe if the overlay was never attached (plugin OFF) or already detached
     // The lines nobody has reported yet - the EXIT event above all: the writer reports it too if it wakes first, and
     // whichever of the two comes first logs it once - come before 'shutdown: begin', so that the end of a log reads in
     // the order it happened.
@@ -3024,6 +3065,10 @@ bool Plugin::LoadConfig() {
             config_.tunnel_enabled = ini::ParseBool(value, true);
         } else if (key == "autoconnect") {
             config_.autoconnect = ini::ParseBool(value, true);
+        } else if (key == "crossplay") {
+            config_.crossplay = ini::ParseBool(value, false);
+        } else if (key == "cross_region") {
+            config_.cross_region = ini::ParseBool(value, false);
         } else if (key == "radio_like") {
             config_.radio_like = ini::ParseRadioLike(value);
         } else if (key == "socket_buffers") {
@@ -3053,15 +3098,21 @@ bool Plugin::LoadConfig() {
             }
         } else if (key == "chat_pos") {
             config_.chat_pos = ini::ParseChatPos(value); // (one of the four words; anything else is the default, bottom-left)
+        } else if (key == "hub_a") {
+            config_.hub_a = ini::HubName(value); // (crossplay: an empty one is a hub left out; both empty = the two defaults)
+        } else if (key == "hub_b") {
+            config_.hub_b = ini::HubName(value);
         }
     }
     chat_on_.store(config_.chat, std::memory_order_relaxed);
     chat_pos_.store(config_.chat_pos, std::memory_order_relaxed);
+
     return true;
 }
 
 bool Plugin::SaveConfig() {
-    // All 18 keys, always, in the order the Setup app writes them (ini::Render is the one writer of both): a file made by the
+    // All 22 keys, always, in the order the Setup app writes them (ini::Render is the one writer of both): a file made by the
+
     // plugin can be edited by hand without knowing which keys exist. The advanced ones, rcvbuf_kb and sleep_stop, used to be
     // written only when they differed from the default, so a file never showed them.
     ini::Fields fields;
@@ -3072,6 +3123,8 @@ bool Plugin::SaveConfig() {
     fields.password = config_.password;
     fields.tunnel = config_.tunnel_enabled;
     fields.autoconnect = config_.autoconnect;
+    fields.crossplay = config_.crossplay;
+    fields.cross_region = config_.cross_region;
     fields.radio_like = config_.radio_like;
     fields.socket_buffers = config_.socket_buffers;
     fields.net_thread_core = config_.net_core;
@@ -3083,6 +3136,9 @@ bool Plugin::SaveConfig() {
     fields.chat = config_.chat;
     fields.chat_key = config_.chat_key;
     fields.chat_pos = config_.chat_pos;
+    fields.hub_a = config_.hub_a;
+    fields.hub_b = config_.hub_b;
+
     const std::string text = ini::Render(fields);
 
     File file;
@@ -3126,6 +3182,27 @@ std::string Plugin::GameName() const {
 }
 
 bool Plugin::Connect() {
+    if (config_.crossplay) {
+        if (!InitSockets()) {
+            PostNotification(SocketInitFailure());
+            return false;
+        }
+        // The hub servers of this mode are hub_a and hub_b of the ini (both set by default, changeable in the Setup app); the room
+        // address (host) is not touched. Both empty = the two defaults.
+        const std::string servers = ini::HubServers(config_.hub_a, config_.hub_b);
+        const bool ok = crossplay_ && crossplay_->Start(
+            servers, config_.password,
+            [this](const azl::WifiPacket& p) { engine_->OnWifiPacket(p); }, // hub -> game
+            [this]() { return console_mac_; },
+            [this](u64 now_ms) {
+                engine_->Tick(now_ms);
+                // keep the hub list warm so a search finds MHGU rooms, with the ids of the game's last scan
+                crossplay_->Scan(crossplay_scan_comm_.load(), static_cast<std::uint8_t>(crossplay_scan_id_.load()));
+            });
+        Log("crossplay: %s -> MHGU hub (%s)", ok ? "bridging local play" : "could not start",
+            servers.c_str());
+        return ok;
+    }
     if (config_.host.empty()) {
         PostNotification("Set the room address first");
         return false;
@@ -3180,7 +3257,7 @@ bool Plugin::Tick(bool want_connected) {
         Log("menu: 'Connect to room' is now %s", want_connected ? "ON" : "OFF");
     }
     want_connected_ = want_connected;
-    if (config_.host.empty() && menu_off() && (last_hint_ms_ == 0 || now - last_hint_ms_ >= kHintIntervalMs)) {
+    if (config_.host.empty() && !config_.crossplay && menu_off() && (last_hint_ms_ == 0 || now - last_hint_ms_ >= kHintIntervalMs)) {
         // With the in-game menu off the address can only come from the settings: say so, now and once a minute,
         // instead of sitting idle (a message at launch is easily missed behind the game's loading screens).
         last_hint_ms_ = now;
@@ -3253,7 +3330,7 @@ bool Plugin::Tick(bool want_connected) {
     if (step.connect && !Connect()) {
         // Not having an address, or a network layer that will not start after a few tries, is not going to fix
         // itself: stop instead of retrying (and nagging) forever.
-        const bool has_host = !config_.host.empty();
+        const bool has_host = !config_.host.empty() || config_.crossplay; // (crossplay needs no room address)
         if (!rejoin_.AttemptFailed(has_host) && has_host) {
             PostNotification("Network unavailable: giving up after several failed tries");
         }

@@ -193,6 +193,10 @@ LoadResult LoadSettings(Settings& cfg) {
             cfg.tunnel = azl::ini::ParseBool(value, true);
         } else if (key == "autoconnect") {
             cfg.autoconnect = azl::ini::ParseBool(value, true);
+        } else if (key == "crossplay") {
+            cfg.crossplay = azl::ini::ParseBool(value, false);
+        } else if (key == "cross_region") {
+            cfg.cross_region = azl::ini::ParseBool(value, false);
         } else if (key == "radio_like") {
             cfg.radio_like = azl::ini::ParseRadioLike(value);
         } else if (key == "socket_buffers") {
@@ -225,6 +229,11 @@ LoadResult LoadSettings(Settings& cfg) {
             }
         } else if (key == "chat_pos") {
             cfg.chat_pos = azl::ini::ParseChatPos(value);
+        } else if (key == "hub_a") {
+            cfg.hub_a = azl::ini::HubName(value);
+        } else if (key == "hub_b") {
+            cfg.hub_b = azl::ini::HubName(value);
+
         } else if (cfg.unknown_lines.size() < kMaxUnknownLines && l.size() <= kMaxUnknownLineLen) {
             cfg.unknown_lines.push_back(l);
         }
@@ -253,6 +262,8 @@ bool SaveSettings(const Settings& cfg) {
     fields.password = cfg.password;
     fields.tunnel = cfg.tunnel;
     fields.autoconnect = cfg.autoconnect;
+    fields.crossplay = cfg.crossplay;
+    fields.cross_region = cfg.cross_region;
     fields.radio_like = cfg.radio_like;
     fields.socket_buffers = cfg.socket_buffers;
     fields.net_thread_core = cfg.net_core;
@@ -264,6 +275,9 @@ bool SaveSettings(const Settings& cfg) {
     fields.chat = cfg.chat;
     fields.chat_key = cfg.chat_key;
     fields.chat_pos = cfg.chat_pos;
+    fields.hub_a = cfg.hub_a;
+    fields.hub_b = cfg.hub_b;
+
     std::vector<std::string> extra;
     for (const std::string& line : cfg.unknown_lines) {
         if (line.size() <= kMaxUnknownLineLen) {

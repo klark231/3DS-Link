@@ -274,10 +274,12 @@ static void TestIniValues() {
     {
         const std::string text = ini::Render(ini::Fields());
         CHECK_EQ(text,
-                 std::string("enabled=1\nhost=\nport=24872\nnickname=\npassword=\ntunnel=1\nautoconnect=1\nradio_like=1\n"
+                 std::string("enabled=1\nhost=\nport=24872\nnickname=\npassword=\ntunnel=1\nautoconnect=1\ncrossplay=0\ncross_region=0\nradio_like=1\n"
                              "socket_buffers=1\nnet_thread_core=-1\nmenu_key=off\ngame_name=\ndebug=0\nrcvbuf_kb=64\n"
-                             "sleep_stop=0\nchat=1\nchat_key=L+Left+Select\nchat_pos=bottom-left\n"));
-        CHECK_EQ(text.size(), 228u);
+                             "sleep_stop=0\nchat=1\nchat_key=L+Left+Select\nchat_pos=bottom-left\n"
+                             "hub_a=hunterhubid-gu-hub.duckdns.org\nhub_b=morerokk-mhgurecomp-ldnserver.duckdns.org\n"));
+        CHECK_EQ(text.size(), 340u);
+
         CHECK(text.find('\r') == std::string::npos);
         std::size_t at = 0;
         for (int i = 0; i < ini::kKeyCount; ++i) {

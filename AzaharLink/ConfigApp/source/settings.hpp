@@ -35,6 +35,8 @@ struct Settings {
     std::string password;
     bool tunnel = true;
     bool autoconnect = true;
+    bool crossplay = false; // MHGU crossplay mode instead of an Azahar room
+    bool cross_region = false; // turn the scan filter off for this game (cross-region)
     int radio_like = 1; // 0 off, 1 broadcast data without retries, 2 unicast too (twice) and the room's stream as it arrives
     bool socket_buffers = true;
     int net_core = -1; // ini key net_thread_core, -1..3 as the plugin takes it (the old net_core=1 written by 0.1.3 is ignored)
@@ -47,6 +49,8 @@ struct Settings {
     bool chat = true;                           // the row "In-game chat"
     std::string chat_key = azl::ini::kDefaultChatKey; // the row "Chat keys"
     int chat_pos = azl::ini::kChatPosDefault;   // the row "Chat position" (azl::ini::ChatPos; the file holds the word)
+    std::string hub_a = azl::ini::kHubDefaultA; // crossplay: first MHGU hub server (the row "Hub server A")
+    std::string hub_b = azl::ini::kHubDefaultB; // crossplay: second MHGU hub server (the row "Hub server B")
     std::vector<std::string> unknown_lines;
     unsigned keys_seen = 0; // not in the file: bit i = the key azl::ini::kKeyNames[i] was in the file that LoadSettings read
     bool moved_from_old_place = false; // not in the file: LoadSettings found the file in sdmc:/luma/plugins and moved it to kIniPath

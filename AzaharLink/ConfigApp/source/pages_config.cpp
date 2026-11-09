@@ -238,6 +238,44 @@ protected:
                                  "whatever this switch says.";
         add(autoconnect);
 
+        Row crossplay;
+        crossplay.id = kCrossplay;
+        crossplay.kind = Kind::Toggle;
+        crossplay.label = "MHGU Crossplay";
+        crossplay.on = g.cfg.crossplay;
+        crossplay.note_title = "MHGU Crossplay";
+        crossplay.note = "ON: local play is bridged to the MHGU crossplay hub, to play with MHGU "
+                         "(Switch/Android) players.\n"
+                         "OFF: normal 3DS Link (join an Azahar room).";
+        add(crossplay);
+
+        // The two MHGU hub servers crossplay connects to (ini keys hub_a, hub_b). A opens the keyboard.
+        const auto hub_row = [&](int id, const char* label, const std::string& name) {
+            Row r;
+            r.id = id;
+            r.kind = Kind::Value;
+            r.label = label;
+            r.value = name.empty() ? std::string("(not used)") : name;
+            r.note_title = label;
+            r.note = "An MHGU hub server for MHGU Crossplay (a host name, or name:port). 3DS Link talks to both hub "
+                     "servers at once, so rooms from either show up and the room you host is listed on both. Empty = this "
+                     "server is not used; both empty = the two default servers. A = edit (* = default).";
+            add(r);
+        };
+        hub_row(kHubA, "Hub server A", g.cfg.hub_a);
+        hub_row(kHubB, "Hub server B", g.cfg.hub_b);
+
+        Row cross_region;
+        cross_region.id = kCrossRegion;
+        cross_region.kind = Kind::Toggle;
+        cross_region.label = "Cross-region";
+        cross_region.on = g.cfg.cross_region;
+        cross_region.note_title = "Cross-region";
+        cross_region.note = "ON: the scan filter is off, so another region of the SAME game (e.g. MH4U and MH4G) "
+                            "shows up and can be joined. Use it in a room where everyone plays that one game: in a room "
+                            "that mixes games, another game can show up too. OFF: only your own region. From the next title start.";
+        add(cross_region);
+
         // (the test belongs with the joining of the room; Radio-like data and End session on sleep are not rows any more since 1.1.1: their
         // keys keep their values in the ini, radio_like=1 and sleep_stop=0 for a new file)
         Row test;
@@ -390,6 +428,26 @@ protected:
                 g.Save();
             }
             break;
+        case kCrossplay:
+            if (SetSwitch(g.cfg.crossplay, step)) {
+                g.Save();
+            }
+            break;
+        case kHubA:
+            if (step == 0) {
+                EditHub("Hub server A", g.cfg.hub_a, azl::ini::kHubDefaultA);
+            }
+            break;
+        case kHubB:
+            if (step == 0) {
+                EditHub("Hub server B", g.cfg.hub_b, azl::ini::kHubDefaultB);
+            }
+            break;
+        case kCrossRegion:
+            if (SetSwitch(g.cfg.cross_region, step)) {
+                g.Save();
+            }
+            break;
         case kMenuKeys:
             if (step == 0) {
                 PushPage(new ChordPage("Menu keys", azl::ini::kDefaultMenuKey, [](const std::string& chord) {
@@ -495,7 +553,7 @@ protected:
     }
 
 private:
-    enum Id { kAutoconnect = 1, kDebug, kMenu, kMenuKeys, kChat, kChatKeys, kChatPos, kTest, kCheck, kAbout, kNickname, kDlpDelivery, kCheckUpdates, kUpdateAtStart };
+    enum Id { kAutoconnect = 1, kDebug, kMenu, kMenuKeys, kChat, kChatKeys, kChatPos, kTest, kCheck, kAbout, kNickname, kDlpDelivery, kCheckUpdates, kUpdateAtStart, kCrossplay, kCrossRegion, kHubA, kHubB };
 
     void EditNickname() {
         std::string input = g.cfg.nickname;
@@ -512,6 +570,28 @@ private:
     }
 
     // A flips the switch, D-pad right sets it ON, left OFF. True when it changed.
+    void EditHub(const char* title, std::string& slot, const char* default_name) {
+        std::string input = slot;
+        const std::string hint = std::string(title) + " (empty = off, * = default)";
+        if (!g.EditText(hint.c_str(), input, static_cast<int>(azl::ini::kHubNameMax), true)) {
+            return;
+        }
+        input = azl::ini::HubName(TrimSpaces(input));
+        if (input == "*") {
+            input = default_name;
+        }
+        for (char c : input) {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' ||
+                            c == '-' || c == '_' || c == ':';
+            if (!ok) {
+                g.ShowToast("Invalid hub name: A-Z a-z 0-9 . - _ : only", col::kOff, 5000);
+                return;
+            }
+        }
+        slot = input;
+        g.Save();
+    }
+
     static bool SetSwitch(bool& value, int step) {
         const bool want = SwitchTarget(value, step);
         if (want == value) {

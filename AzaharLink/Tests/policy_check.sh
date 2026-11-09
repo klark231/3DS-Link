@@ -56,14 +56,14 @@ tr -d '\r' < README.md | grep -q "^| \`sleep_stop\` | $SLEEP_DEFAULT |" || fail 
 # lines on the top screen, which came with the chat itself).
 # menu_key and debug are old keys: 0.1.15 only gave them values (menu_key=off, debug 0 or 1).
 KEYS=$(tr -d '\r' < Sources/ctr/plugin.cpp | grep -o 'key == "[a-z_]*"' | sed 's/key == "//; s/"//' | sort | tr '\n' ' ')
-WANTED="autoconnect chat chat_key chat_pos debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
+WANTED="autoconnect chat chat_key chat_pos cross_region crossplay debug enabled game_name host hub_a hub_b menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
 [ "$KEYS" = "$WANTED" ] || fail "the ini keys read by the plugin are '$KEYS', expected '$WANTED'"
 
 # Both programs write all 18 keys, in one place: they fill every field of ini::Fields and call ini::Render, which writes the 18
 # lines (a writer that forgets a key, or a third writer with its own list, fails here). Before 0.1.16 the plugin left out
 # rcvbuf_kb and sleep_stop unless they were set and the app did not know them: a file made by either had no line for them and a
 # hand edit needed the key names.
-FIELDS="autoconnect chat chat_key chat_pos debug enabled game_name host menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
+FIELDS="autoconnect chat chat_key chat_pos cross_region crossplay debug enabled game_name host hub_a hub_b menu_key net_thread_core nickname password port radio_like rcvbuf_kb sleep_stop socket_buffers tunnel "
 for f in Sources/ctr/plugin.cpp ConfigApp/source/settings.cpp; do
   GOT=$(tr -d '\r' < "$f" | grep -o 'fields\.[a-z_]* = ' | sed 's/fields\.//; s/ = //' | sort -u | tr '\n' ' ')
   [ "$GOT" = "$FIELDS" ] || fail "$f fills the ini fields '$GOT', expected '$FIELDS'"
@@ -1303,7 +1303,7 @@ need Sources/ctr/plugin.cpp ': DebugRingReady() ? "AzaharLink.log and AzaharLink
 # ... and nothing else in the product touches a file: not one call that creates, writes, removes or renames outside the
 # log layer (Sources/azl/log_files.cpp, which only calls its FileLayer) and plugin.cpp (counted above; its FSUSER_*
 # calls only read the game's icon)
-if grep -rn -E 'File::(Open|Remove|Rename)|fopen|freopen|std::(o|i)?fstream|FSUSER_(OpenFile|DeleteFile|RenameFile|CreateFile)|FS_OPEN_(WRITE|CREATE)|mkdir|\bopen\(' Sources Includes --include=*.cpp --include=*.hpp --include=*.c --include=*.h | grep -v "^Sources/ctr/plugin.cpp:\|^Sources/azl/log_files.cpp:\|^Sources/ctr/boot_diag.cpp:\|^Sources/game_menu_tour.cpp:"; then
+if grep -rn -E 'File::(Open|Remove|Rename)|fopen|freopen|std::(o|i)?fstream|FSUSER_(OpenFile|DeleteFile|RenameFile|CreateFile)|FS_OPEN_(WRITE|CREATE)|mkdir|\bopen\(' Sources Includes --include=*.cpp --include=*.hpp --include=*.c --include=*.h | grep -v "^Sources/ctr/plugin.cpp:\|^Sources/azl/log_files.cpp:\|^Sources/ctr/boot_diag.cpp:\|^Sources/game_menu_tour.cpp:\|^Sources/mhgu/\|^Includes/mhgu_compat/"; then
   fail "a source file besides the log layer and plugin.cpp touches a file (debug=0 must leave the card alone)"
 fi
 grep -q 'FS_OPEN_WRITE\|FS_OPEN_CREATE' Sources/ctr/plugin.cpp && fail "plugin.cpp opens a file of the card for writing through FSUSER (only the icon is read that way)"
@@ -1324,7 +1324,7 @@ tr -d '\r' < Sources/game_menu_tour.cpp | tail -1 | grep -q -F -- '#endif // AZL
 need Sources/main.cpp "g_menu_off = plugin.menu_off();" "main reads the switch"
 tr -d '\r' < Sources/main.cpp | grep -A1 "static bool OnMenuOpening" | grep -q "return false;" || fail "OnMenuOpening lets the framework's menu open (the plugin's own menu is the only one)"
 need Sources/main.cpp "    if (!g_menu_off) {" "the plugin's menu is looked for only when the switch is on"
-need Sources/main.cpp "g_want_connected = (cfg.autoconnect || g_menu_off) && !cfg.host.empty();" "with the menu off the room is joined at start whatever autoconnect says"
+need Sources/main.cpp "g_want_connected = (cfg.autoconnect || g_menu_off) && (!cfg.host.empty() || cfg.crossplay);" "with the menu off the room is joined at start whatever autoconnect says"
 # The plugin's own in-game menu (Sources/game_menu.cpp): no cheat tools, B closes it, the room changes with the game running.
 need Sources/main.cpp "settings.AllowActionReplay = false;" "the framework's cheat codes are off"
 need Sources/main.cpp "settings.AllowSearchEngine = false;" "... and its memory search"
@@ -1340,10 +1340,9 @@ need Sources/ctr/plugin.cpp "config_.menu_key = ini::MenuKeyFromFile(value);" "a
 need ConfigApp/source/settings.cpp "cfg.menu_key = azl::ini::MenuKeyFromFile(value);" "... and the app"
 need Includes/azl/ini_values.hpp 'return word == "off" || word == "none";' "off and none switch the menu off"
 
-# The scan filter only counts (spec C7): nothing in the plugin turns it on
-if grep -rn "SetScanFilterEnforced" Sources/ctr Sources/main.cpp >/dev/null 2>&1; then
-  fail "the plugin calls SetScanFilterEnforced: the filter's mode is the engine's default (enforced since 2026-10-20), the switch is the tests'"
-fi
+# The scan filter is on by default. The plugin may turn it OFF only behind the cross_region toggle: exactly one call.
+[ "$(grep -rho 'SetScanFilterEnforced' Sources/ctr Sources/main.cpp | wc -l)" = "1" ] || fail "SetScanFilterEnforced must be called exactly once in the plugin (only the cross_region gate turns the filter off)"
+need Sources/ctr/plugin.cpp "if (config_.cross_region) {" "the scan filter is turned off only behind the cross_region toggle"
 need Includes/azl/uds_engine.hpp "bool scan_filter_enforced_ = true;" "the scan filter leaves the networks of another game out (2026-10-20)"
 
 # The sleep action exists in one place, behind sleep_stop

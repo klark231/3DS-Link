@@ -107,6 +107,10 @@ struct EapolStart {
     NodeInfo node;
 };
 bool ParseEapolStartFrame(const std::vector<u8>& frame, EapolStart* out);
+/// Compatibility parse (ported from AzaharPlus ParseCompatibleEAPoLStart): like ParseEapolStartFrame, but the
+/// connection type is normalised: 0 and 1 -> Client, 2 -> Spectator, anything else -> Client. `*legacy` is
+/// set when the raw type was not one of the two standard values (1 or 2).
+bool ParseCompatibleEapolStartFrame(const std::vector<u8>& frame, EapolStart* out, bool* legacy = nullptr);
 
 std::vector<u8> GenerateEapolLogoffFrame(u16 network_node_id, const std::vector<NodeInfo>& nodes,
                                          u8 max_nodes, u8 total_nodes);

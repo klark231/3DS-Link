@@ -6327,7 +6327,9 @@ static void TestJoinsInOneRoundTrip() {
     t2.join();
     CHECK_EQ(carol.Status().network_node_id, 2);
 
-    // an EAPoL-Start of a type nobody knows admits nobody and is not answered with a Logoff (id 0 would be adopted by every connecting client)
+    // A non-standard EAPoL-Start connection type is normalised to a Client by ParseCompatibleEapolStartFrame (uds_frames.cpp),
+    // the shim that lets a 3DS-Link host accept both the old Citra and the new Azahar EAPoL-Start layouts. The client it carries
+    // with network node id 0 is admitted with a real id from GetNextAvailableNodeId (never the 0 it sent), so nothing adopts id 0.
     Bench host(room, 1);
     CHECK_EQ(host.Init(), 0u);
     CHECK_EQ(host.BeginHosting(4), 0u);
@@ -6339,10 +6341,10 @@ static void TestJoinsInOneRoundTrip() {
     r.Send(WifiPacket::Type::Data, host.console.mac,
            GenerateEapolStartFrame(1, static_cast<ConnectionType>(7), MakeNode(0x7000 + r.mac[5], "Raw", 0)));
     room.WaitIdle();
-    CHECK_EQ(r.Logoffs(true), 0);
+    CHECK_EQ(r.Logoffs(true), 1);  // the admitted client is told the room's node map (its own join)
     CHECK_EQ(r.Logoffs(false), 0);
-    CHECK_EQ(host.Status().total_nodes, 1);
-    CHECK_EQ(host.Signals(host.status_event), events);
+    CHECK_EQ(host.Status().total_nodes, 2);                 // host + the admitted client
+    CHECK_EQ(host.Signals(host.status_event), events + 1);  // the join fires one status event
     CHECK_RULES();
 }
 

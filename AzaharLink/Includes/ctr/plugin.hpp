@@ -10,10 +10,12 @@
 #include <vector>
 
 #include "azl/dlp_hub.hpp"
+#include "azl/once.hpp"
 #include "azl/ini_values.hpp"
 #include "azl/link_policy.hpp"
 #include "azl/log_files.hpp"
 #include "azl/platform.hpp"
+#include "ctr/crossplay.hpp"
 #include "azl/room_client.hpp"
 #include "azl/room_members.hpp"
 #include "azl/screen_text.hpp"
@@ -43,6 +45,8 @@ struct Config {
     std::string password;
     bool tunnel_enabled = true;           ///< false: like enabled=0 (the real local wireless is used)
     bool autoconnect = true;              ///< join the room as soon as the game has booted
+    bool crossplay = false;               ///< true: bridge local play to the MHGU crossplay hub instead of an Azahar room
+    bool cross_region = false;            ///< true: turn the scan filter off for this session so other-region lobbies of this game are joinable
     int radio_like = 1;                   ///< 0 all reliable, 1 broadcast game data unreliably like the real radio, 2 unicast too, twice (ini::ParseRadioLike)
     bool socket_buffers = true;           ///< ask the soc service for bigger UDP buffers
     int net_core = -1;                    ///< core of the network thread (-1 any, 0 game core, 1 syscore)
@@ -54,6 +58,8 @@ struct Config {
     bool chat = true;                     ///< ini key chat: the chat of the room over the title (set at runtime by SetChatOn)
     std::string chat_key = ini::kDefaultChatKey; ///< ini key chat_key: the chord that opens it
     int chat_pos = ini::kChatPosDefault;  ///< ini key chat_pos: the corner of the chat's lines on the top screen (ini::ChatPos)
+    std::string hub_a = ini::kHubDefaultA; ///< ini key hub_a: first MHGU hub server of crossplay mode (empty = not used)
+    std::string hub_b = ini::kHubDefaultB; ///< ini key hub_b: second MHGU hub server of crossplay mode (empty = not used)
 };
 
 class Plugin {
@@ -180,6 +186,7 @@ public:
     void PostNotification(const std::string& message);
 
 private:
+    friend class ::azl::LazyNew<Plugin>; // Plugin::Get() builds the one instance through LazyNew (azl/once.hpp), which needs the constructor
     Plugin() = default;
 
     /// Where the name shown in the room came from (a stronger source is never replaced by a weaker).
@@ -296,6 +303,9 @@ private:
 
     CtrKernelOps kernel_;
     std::unique_ptr<RoomClient> room_;
+    std::atomic<u32> crossplay_scan_comm_{0}; ///< the wlancommid of the game's last scan (0: it has not scanned yet)
+    std::atomic<u32> crossplay_scan_id_{0};   ///< its id8
+    std::unique_ptr<azlx::CrossplayBridge> crossplay_; ///< drives the MHGU hub when config_.crossplay
     std::unique_ptr<UdsEngine> engine_;
     std::unique_ptr<UdsHle> hle_;
     /// The fake Download Play lobby (azl/dlp_hub.hpp): only for the games in Lobby mode (kDlpGames in plugin.cpp), null for the others.

@@ -237,8 +237,16 @@ inline KeyValue SplitLine(const std::string& line) {
 }
 
 /// Every key of AzaharLink.ini, in the order both programs write them, with the value a new file holds. The plugin reads
-/// exactly these 18 (Tests/policy_check.sh checks it), the 13 first are the keys of 0.1.14, chat and chat_key came with the in-game menu
+/// exactly these 22 (Tests/policy_check.sh checks it), the 13 first are the keys of 0.1.14, chat and chat_key came with the in-game menu
 /// of 1.1.1, chat_pos with the chat itself.
+/// exactly these 22 (Tests/policy_check.sh checks it) and the 13 first are the keys of 0.1.14.
+/// The two MHGU hub servers 3DS Link connects to in crossplay mode when nothing else is set (the same two as AzaharPlus's
+/// mhgu_hub_servers). hub_a / hub_b in AzaharLink.ini replace them; a name may carry a port ("name:port").
+constexpr const char* kHubDefaultA = "hunterhubid-gu-hub.duckdns.org";
+constexpr const char* kHubDefaultB = "morerokk-mhgurecomp-ldnserver.duckdns.org";
+constexpr std::size_t kHubNameMax = 60; // the longest name the Setup app takes for one hub server
+
+
 struct Fields {
     bool enabled = true;
     std::string host;
@@ -247,6 +255,8 @@ struct Fields {
     std::string password;
     bool tunnel = true;
     bool autoconnect = true;
+    bool crossplay = false; // route local play to the MHGU crossplay hub instead of an Azahar room
+    bool cross_region = false; // turn off the scan filter for this game's session (list other-region lobbies of this game)
     int radio_like = 1; // 0, 1, 2 (ParseRadioLike)
     bool socket_buffers = true;
     int net_thread_core = -1;
@@ -258,11 +268,15 @@ struct Fields {
     bool chat = true;                       // the chat of the room shown over the title (on: the user's choice; it can be switched off)
     std::string chat_key = kDefaultChatKey; // the chord that opens it
     int chat_pos = kChatPosDefault;         // the corner of its lines (ParseChatPos; the file holds the word)
+    std::string hub_a = kHubDefaultA; // crossplay: first MHGU hub server (empty = not used)
+    std::string hub_b = kHubDefaultB; // crossplay: second MHGU hub server (empty = not used)
 };
-constexpr int kKeyCount = 18;
+constexpr int kKeyCount = 22;
 constexpr const char* kKeyNames[kKeyCount] = {
-    "enabled", "host",      "port",  "nickname",       "password",  "tunnel",    "autoconnect", "radio_like",
-    "socket_buffers", "net_thread_core", "menu_key", "game_name", "debug", "rcvbuf_kb", "sleep_stop", "chat", "chat_key", "chat_pos"};
+    "enabled", "host", "port", "nickname", "password", "tunnel", "autoconnect", "crossplay", "cross_region", "radio_like",
+    "socket_buffers", "net_thread_core", "menu_key", "game_name", "debug", "rcvbuf_kb", "sleep_stop", "chat", "chat_key", "chat_pos",
+    "hub_a", "hub_b"};
+
 
 /// Values are single lines: a stray newline would corrupt the file.
 inline std::string OneLine(std::string s) {
@@ -274,7 +288,36 @@ inline std::string OneLine(std::string s) {
     return s;
 }
 
-/// The whole file: all 18 keys, one per line, LF line ends, always the same order, then `extra` (lines the writer does not
+/// The whole file: all 22 keys, one per line, LF line ends, always the same order, then `extra` (lines the writer does not
+/// One hub server name as the ini or the keyboard gave it: surrounding blanks and a scheme-less "http://" are the proto's
+/// business, here only the blanks go (a name never holds one: a space would make it two servers).
+inline std::string HubName(const std::string& raw) {
+    std::string out;
+    for (char c : raw) {
+        if (c != ' ' && c != '\t' && c != ',' && c != '\r' && c != '\n') {
+            out += c;
+        }
+    }
+    return out;
+}
+
+/// The server list the MHGU bridge gets ("a b": space separated): hub_a and hub_b, the ones that are set. When both are empty
+/// the two defaults are used, so crossplay never starts with nowhere to go (to leave a hub out, put "-" in front of its name).
+inline std::string HubServers(const std::string& hub_a, const std::string& hub_b) {
+    std::string a = HubName(hub_a);
+    std::string b = HubName(hub_b);
+    if (a.empty() && b.empty()) {
+        a = kHubDefaultA;
+        b = kHubDefaultB;
+    }
+    if (a.empty() || b.empty()) {
+        return a.empty() ? b : a;
+    }
+    return a + " " + b;
+}
+
+/// The whole file: all 22 keys, one per line, LF line ends, always the same order, then `extra` (lines the writer does not
+
 /// understand and keeps) as far as they fit in `max_bytes`. The plugin refuses a file larger than 4096 bytes.
 inline std::string Render(const Fields& f, const std::vector<std::string>& extra = std::vector<std::string>(),
                           std::size_t max_bytes = 3800) {
@@ -287,6 +330,8 @@ inline std::string Render(const Fields& f, const std::vector<std::string>& extra
     out += "password=" + OneLine(f.password) + "\n";
     out += std::string("tunnel=") + flag(f.tunnel) + "\n";
     out += std::string("autoconnect=") + flag(f.autoconnect) + "\n";
+    out += std::string("crossplay=") + flag(f.crossplay) + "\n";
+    out += std::string("cross_region=") + flag(f.cross_region) + "\n";
     out += "radio_like=" + std::to_string(f.radio_like) + "\n";
     out += std::string("socket_buffers=") + flag(f.socket_buffers) + "\n";
     out += "net_thread_core=" + std::to_string(f.net_thread_core) + "\n";
@@ -298,6 +343,9 @@ inline std::string Render(const Fields& f, const std::vector<std::string>& extra
     out += std::string("chat=") + flag(f.chat) + "\n";
     out += "chat_key=" + OneLine(f.chat_key) + "\n";
     out += std::string("chat_pos=") + ChatPosWord(f.chat_pos) + "\n";
+    out += "hub_a=" + OneLine(f.hub_a) + "\n";
+    out += "hub_b=" + OneLine(f.hub_b) + "\n";
+
     for (const std::string& line : extra) {
         if (out.size() + line.size() + 1 > max_bytes) {
             break;

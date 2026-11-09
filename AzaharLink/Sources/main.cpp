@@ -230,7 +230,7 @@ int main(void) {
 
     // Joining by itself is the only way a room is ever joined when the menu is off, so then it does not depend on
     // autoconnect (nobody could ask for it).
-    g_want_connected = (cfg.autoconnect || g_menu_off) && !cfg.host.empty();
+    g_want_connected = (cfg.autoconnect || g_menu_off) && (!cfg.host.empty() || cfg.crossplay);
 
     menu->Callback(OnFrame);
     menu->Run();

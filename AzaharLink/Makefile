@@ -13,8 +13,8 @@ TARGET		:= 	AzaharLink
 PLGINFO 	:= 	CTRPluginFramework.plgInfo
 
 BUILD		:= 	Build
-INCLUDES	:= 	Includes
-SOURCES 	:= 	Sources Sources/azl Sources/ctr Sources/enet
+INCLUDES	:= 	Includes Includes/mhgu_compat Includes/mhgu_compat/fmt_include
+SOURCES 	:= 	Sources Sources/azl Sources/ctr Sources/enet Sources/mhgu
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -28,7 +28,12 @@ CFLAGS		+=	$(INCLUDE) -D__3DS__ -DAZL_USE_CTRPF -Wall -Wno-psabi
 # (a test build only: make EXTRA_CFLAGS=-DAZL_MENU_TOUR, the in-game menu walks itself and takes its screenshots; never in a release)
 CFLAGS		+=	$(EXTRA_CFLAGS)
 
+
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
+# The MHGU bridge (Sources/mhgu) and the crossplay glue need C++20 (std::span) and header-only
+# fmt; the rest of the plugin stays gnu++17. Per-object override:
+BRIDGE_OFILES := crossplay.o mhgu_hub.o mhgu_hub_proto.o minicrypto.o uds_beacon.o uds_connection.o uds_data.o
+$(BRIDGE_OFILES): CXXFLAGS := $(filter-out -std=gnu++17,$(CXXFLAGS)) -std=gnu++20 -DFMT_HEADER_ONLY=1 -DFMT_EXCEPTIONS=0
 
 ASFLAGS		:=	$(ARCH)
 # --wrap=srvGetServiceHandle lets ctr/soc.cpp hand libctru's socInit() a soc:U session even when the
