@@ -41,13 +41,15 @@ jobs:
 
       - run: bash DlpLink/tools/build_all.sh --dist
 
+      # --dist puts the deliverables in AzaharLink/dist/ (the .3gx plugin is embedded inside the app,
+      # which writes it to the SD at sdmc:/3ds/3DSLink). We also ship the raw .3gx for Luma plugin-loader users.
       - uses: actions/upload-artifact@v4
         with:
           name: 3DSLink
           path: |
+            AzaharLink/dist/3DSLink.cia
+            AzaharLink/dist/3DSLink.3dsx
             AzaharLink/AzaharLink.3gx
-            AzaharLink/ConfigApp/3DSLink.3dsx
-            DlpLink/out/3dslink.cia
 
       - uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
@@ -56,6 +58,6 @@ jobs:
           prerelease: true
           make_latest: false
           files: |
+            AzaharLink/dist/3DSLink.cia
+            AzaharLink/dist/3DSLink.3dsx
             AzaharLink/AzaharLink.3gx
-            AzaharLink/ConfigApp/3DSLink.3dsx
-            DlpLink/out/3dslink.cia

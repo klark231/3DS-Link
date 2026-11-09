@@ -19,6 +19,24 @@ for f in AzaharLink/ConfigApp/source/update_logic.hpp \
 done
 echo "updater -> github.com/$ME/3DS-Link"
 
+# 1b) Drop the two whole-CIA byte-for-byte cmp lines that 1.1.2 added to dlpc_check.sh. gionko's own
+#     1.1.1 omitted them on purpose ("makerom draws random fields on every run, so it could never
+#     pass"); they pass only on his local toolchain and fail in Docker CI at the NCCH hash region.
+#     The real guarantees stay: verify_cia.py (VALIDO) and dlph_test (served to a simulated console).
+python3 - <<'PY'
+p = "DlpLink/tests/dlpc_check.sh"
+import os
+if os.path.exists(p):
+    d = open(p, "rb").read()
+    for line in (
+        b'  cmp "$W/run/composed.cia" "$OUT/3dslink-child.cia" && echo "composed.cia == 3dslink-child.cia (byte for byte)" || rc=1\n',
+        b'  cmp "$W/run/composed.emu.cia" "$OUT/3dslink-child.emu.cia" && echo "composed.emu.cia == 3dslink-child.emu.cia (byte for byte)" || rc=1\n',
+    ):
+        d = d.replace(line, b'')
+    open(p, "wb").write(d)
+    print("dlpc_check.sh: removed byte-for-byte cmp (restored 1.1.1 behavior)" if b"byte for byte" not in d else "dlpc_check.sh: cmp lines NOT found (already clean?)")
+PY
+
 # 2) A build workflow so it builds on your repo, and a stuck Docker pull FAILS in 30 min instead of
 #    hanging for 6 hours. Optional Docker Hub login (set DOCKERHUB_USERNAME/DOCKERHUB_TOKEN repo secrets)
 #    lifts the anonymous pull limit that was the likely cause of the hang.
@@ -67,13 +85,15 @@ jobs:
 
       - run: bash DlpLink/tools/build_all.sh --dist
 
+      # --dist puts the deliverables in AzaharLink/dist/ (the .3gx plugin is embedded inside the app,
+      # which writes it to the SD at sdmc:/3ds/3DSLink). We also ship the raw .3gx for Luma plugin-loader users.
       - uses: actions/upload-artifact@v4
         with:
           name: 3DSLink
           path: |
+            AzaharLink/dist/3DSLink.cia
+            AzaharLink/dist/3DSLink.3dsx
             AzaharLink/AzaharLink.3gx
-            AzaharLink/ConfigApp/3DSLink.3dsx
-            DlpLink/out/3dslink.cia
 
       - uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
@@ -82,9 +102,9 @@ jobs:
           prerelease: true
           make_latest: false
           files: |
+            AzaharLink/dist/3DSLink.cia
+            AzaharLink/dist/3DSLink.3dsx
             AzaharLink/AzaharLink.3gx
-            AzaharLink/ConfigApp/3DSLink.3dsx
-            DlpLink/out/3dslink.cia
 YML
 echo "wrote .github/workflows/build.yml (30-min timeout + optional Docker login)"
 echo

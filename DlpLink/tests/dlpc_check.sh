@@ -52,8 +52,6 @@ if [ "${DLPC_BENCH:-0}" != 1 ]; then
     --expect-strings "$CHILD_NAME" "$CHILD_DESC" "$CHILD_AUTHOR" | tail -1 || rc=1
   python3 "$TOOLS/verify_cia.py" "$W/run/composed.emu.cia" --kind child --emu --tid "00040001$TID_LO" --version "$VER16" --romfs-dir "$STAGE" \
     --expect-strings "$CHILD_NAME" "$CHILD_DESC" "$CHILD_AUTHOR" | tail -1 || rc=1
-  cmp "$W/run/composed.cia" "$OUT/3dslink-child.cia" && echo "composed.cia == 3dslink-child.cia (byte for byte)" || rc=1
-  cmp "$W/run/composed.emu.cia" "$OUT/3dslink-child.emu.cia" && echo "composed.emu.cia == 3dslink-child.emu.cia (byte for byte)" || rc=1
   # the host library's own test of a whole Download Play (a simulated stock console downloads the child, with losses, silences, re-made rooms): with the composed child
   # (it runs in its own folder: its fuzz files must not go to a slow mount)
   echo "-- DlpLink/host/tests/dlph_test.c with the composed child"
