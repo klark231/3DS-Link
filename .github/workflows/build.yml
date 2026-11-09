@@ -1,0 +1,61 @@
+name: build
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30          # a stalled Docker pull fails here, not after 6 hours
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: bash AzaharLink/Tests/policy_check.sh
+
+      # Optional: authenticated Docker Hub pulls (higher rate limit). Set repo secrets
+      # DOCKERHUB_USERNAME and DOCKERHUB_TOKEN to enable; without them it pulls anonymously.
+      - name: Docker Hub login (optional)
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DH_TOKEN" ]; then
+            echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin
+          else
+            echo "no Docker Hub secrets set: pulling anonymously"
+          fi
+
+      - uses: actions/cache@v4
+        id: ctr_tools
+        with:
+          path: |
+            tools_ctr/makerom
+            tools_ctr/ctrtool
+          key: ctr-tools-${{ hashFiles('tools_ctr/build_tools.sh') }}
+
+      - if: steps.ctr_tools.outputs.cache-hit != 'true'
+        run: bash tools_ctr/build_tools.sh
+
+      - run: bash DlpLink/tools/build_all.sh --dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 3DSLink
+          path: |
+            AzaharLink/AzaharLink.3gx
+            AzaharLink/ConfigApp/3DSLink.3dsx
+            DlpLink/out/3dslink.cia
+
+      - uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: build-${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          files: |
+            AzaharLink/AzaharLink.3gx
+            AzaharLink/ConfigApp/3DSLink.3dsx
+            DlpLink/out/3dslink.cia

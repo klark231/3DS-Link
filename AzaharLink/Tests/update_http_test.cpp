@@ -79,7 +79,7 @@ static void RunMock(int port) {
 
     // The question: one redirect, not followed.
     CHECK_RESULT(GetRedirectTarget(Url(good, "/latest"), control, location), NetResult::Ok);
-    CHECK(location == "https://github.com/gionko/3DS-Link/releases/tag/v1.2.3");
+    CHECK(location == "https://github.com/klark231/3DS-Link/releases/tag/v1.2.3");
     CHECK(VersionFromLocation(location) == "1.2.3");
     CHECK_RESULT(GetRedirectTarget(Url(good, "/file"), control, location), NetResult::Server); // (a 200 is no redirect)
     CHECK(location.empty());
@@ -207,7 +207,7 @@ static void RunGithubOk() {
     std::printf("what's new: %s\n", news.c_str());
     CHECK(!news.empty());
 
-    CHECK_RESULT(Download("https://github.com/gionko/3DS-Link/releases/download/v0.0.0/none.cia", control, kMaxFileBytes, file), NetResult::Server);
+    CHECK_RESULT(Download("https://github.com/klark231/3DS-Link/releases/download/v0.0.0/none.cia", control, kMaxFileBytes, file), NetResult::Server);
 }
 
 static void RunGithubClock() {
