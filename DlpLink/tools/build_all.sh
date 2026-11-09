@@ -133,7 +133,7 @@ python DlpLink/tools/check_version_in_binary.py "$(python AzaharLink/Tests/set_v
 
 echo "== 4. i CIA e i controlli"
 GUARD=check; [ "$REGISTER" = 1 ] && GUARD=register
-docker_run . env GUARD="$GUARD" NO_APP="$((1 - APP))" DLP_AD="${DLP_AD:-wild}" bash DlpLink/tools/build_cias.sh
+docker_run . env GUARD="$GUARD" NO_APP="$((1 - APP))" DLP_AD="${DLP_AD:-wild}" DLP_SKIP_SELFTEST="${DLP_SKIP_SELFTEST:-0}" bash DlpLink/tools/build_cias.sh
 
 if [ "$DIST" = 1 ]; then
   echo "== 5. AzaharLink/dist"
