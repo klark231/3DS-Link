@@ -1225,7 +1225,7 @@ private:
             return; // (copies of the update for players already in: the hub tells them itself)
         }
         const auto logoff = ParseEAPoLLogoffFrame(p.data);
-        const int id = logoff.assigned_node_id;
+        const int id = static_cast<u16>(logoff.assigned_node_id);
         const int slot = id - 1;
         Pending pd = *it;
         pending.erase(it);

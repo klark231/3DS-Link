@@ -295,14 +295,14 @@ static void TestIniValues() {
         f.chat_pos = ini::kChatPosTopRight;
         const std::string two = ini::Render(f, {"# note", "future=7"});
         CHECK(two.find("host=a b\n") != std::string::npos); // a stray line break would corrupt the file
-        CHECK(two.find("rcvbuf_kb=32\nsleep_stop=2\nchat=1\nchat_key=L+Left+Select\nchat_pos=top-right\n# note\nfuture=7\n") != std::string::npos);
+        CHECK(two.find("rcvbuf_kb=32\nsleep_stop=2\nchat=1\nchat_key=L+Left+Select\nchat_pos=top-right\nhub_a=hunterhubid-gu-hub.duckdns.org\nhub_b=morerokk-mhgurecomp-ldnserver.duckdns.org\n# note\nfuture=7\n") != std::string::npos);
         // what does not fit under the limit is left out, whole lines only
         const std::string small = ini::Render(ini::Fields(), {"aaaaaaaaaa", "bbbbbbbbbb"}, text.size() + 12);
         CHECK(small.find("aaaaaaaaaa\n") != std::string::npos && small.find("bbbbbbbbbb") == std::string::npos);
     }
     // chat_pos: the four words both ways, a slip is the default (bottom-left), a field out of the table is written as the default
-    CHECK(ini::kChatPosDefault == ini::kChatPosBottomLeft && ini::kKeyCount == 18);
-    CHECK(std::string(ini::kKeyNames[ini::kKeyCount - 1]) == "chat_pos");
+    CHECK(ini::kChatPosDefault == ini::kChatPosBottomLeft && ini::kKeyCount == 22);
+    CHECK(std::string(ini::kKeyNames[ini::kKeyCount - 1]) == "hub_b");
     for (int v = 0; v < ini::kChatPosCount; ++v) {
         CHECK(ini::ParseChatPos(ini::ChatPosWord(v)) == v);
         CHECK(ini::NextChatPos(ini::NextChatPos(v, 0), -1) == v);
