@@ -41,18 +41,30 @@ jobs:
 
       - run: bash DlpLink/tools/build_all.sh --dist
 
+      # If any check fails, print the FULL log so we can see which check (the console only shows the last 25 lines).
+      - name: full check log on failure
+        if: failure()
+        run: |
+          echo "===================== DlpLink/out/build_cias.log ====================="
+          cat DlpLink/out/build_cias.log 2>/dev/null || echo "(no build_cias.log)"
+
       # --dist puts the deliverables in AzaharLink/dist/ (the .3gx plugin is embedded inside the app,
-      # which writes it to the SD at sdmc:/3ds/3DSLink). We also ship the raw .3gx for Luma plugin-loader users.
+      # which writes it to the SD at sdmc:/3ds/3DSLink). We also ship the raw .3gx for Luma plugin-loader
+      # users, plus the pre-dist outputs so a failing build still hands you something testable.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: 3DSLink
+          if-no-files-found: ignore
           path: |
             AzaharLink/dist/3DSLink.cia
             AzaharLink/dist/3DSLink.3dsx
             AzaharLink/AzaharLink.3gx
+            DlpLink/out/3dslink.cia
+            AzaharLink/ConfigApp/3DSLink.3dsx
 
       - uses: softprops/action-gh-release@v2
-        if: github.ref == 'refs/heads/main'
+        if: success() && github.ref == 'refs/heads/main'
         with:
           tag_name: build-${{ github.run_number }}
           prerelease: true
