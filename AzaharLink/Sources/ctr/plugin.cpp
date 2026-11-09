@@ -2762,7 +2762,6 @@ void Plugin::OnSleepEnter() {
     if (engine_->StopService(kServiceSleep)) {
         session_dropped_.store(true); // (a session was up)
     }
-    chat_overlay::Detach();
     room_->RequestStop(true); // (the network thread sends what is queued, a Deauthentication among it, and leaves)
 }
 
@@ -2888,7 +2887,6 @@ void Plugin::RequestStop() {
     // Called from the framework's exit event on a very small stack: flag stores only.
     shutting_down_.store(true);
     BeginTeardown();
-    chat_overlay::Detach(); // stop the overlay's threads here: at process exit __libc_fini_array would Join the event thread, which can block (hidWaitForEvent)
     if (room_) {
         room_->RequestStop(true);
     }
@@ -2907,7 +2905,6 @@ void Plugin::Shutdown() {
     shut_down_ = true;
     shutting_down_.store(true);
     OpenSwapGate(); // (a thread stopped at the gate could never be joined)
-    chat_overlay::Detach(); // idempotent: safe if the overlay was never attached (plugin OFF) or already detached
     // The lines nobody has reported yet - the EXIT event above all: the writer reports it too if it wakes first, and
     // whichever of the two comes first logs it once - come before 'shutdown: begin', so that the end of a log reads in
     // the order it happened.
