@@ -193,6 +193,8 @@ struct ListedHub {
     std::string server_name;
 };
 enum class ServerState { Online, NotFound, Unreachable, NoAnswer, Refused };
+// Why the list requests of THIS thread failed since the last call ("" = none): for the log.
+std::string TakeListWhy();
 ServerState ListHubs(const std::string& server, const std::string& key, u16 link_version, int connect_ms,
                      std::vector<ListedHub>& out);
 // Every link version we speak, and (key empty) the phones' public room too; the best state of them all.

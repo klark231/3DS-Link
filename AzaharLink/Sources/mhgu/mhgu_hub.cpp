@@ -462,6 +462,8 @@ private:
         u32 session_param = 0;
     };
 
+    std::string last_list_summary; // (touched by the list thread only; RequestList joins the last one first)
+
     void RequestList() {
         list_pending = true;
         last_list = Clock::now();
@@ -473,16 +475,26 @@ private:
         list_thread = azl::SafeThread([this, servers, key] {
             std::vector<std::vector<H::ListedHub>> found(servers.size());
             std::vector<H::ServerState> states(servers.size(), H::ServerState::NoAnswer);
+            std::vector<std::string> why(servers.size());
             std::vector<azl::SafeThread> ts;
             for (std::size_t i = 0; i < servers.size(); i++) {
                 // (one thread a server: asks each link version, and the phones' public room when there is no key)
-                ts.emplace_back([&, i] { states[i] = H::ListHubsAll(servers[i], key, 800, found[i]); });
+                // 3000 ms to connect: the 3DS's WiFi is slow, 800 ms was meant for a PC.
+                ts.emplace_back([&, i] {
+                    states[i] = H::ListHubsAll(servers[i], key, 3000, found[i]);
+                    why[i] = H::TakeListWhy();
+                });
             }
             for (auto& t : ts) {
                 t.join();
             }
             std::vector<H::ListedHub> all;
+            std::string summary;
             for (std::size_t i = 0; i < servers.size(); i++) {
+                summary += fmt::format("{}{}: {}{}{}", i ? " | " : "", servers[i],
+                                       states[i] == H::ServerState::Online ? "online" : "no list",
+                                       found[i].empty() ? "" : fmt::format(", {} hub(s)", found[i].size()),
+                                       why[i].empty() ? "" : " (" + why[i] + ")");
                 if (states[i] != H::ServerState::Online) {
                     LOG_DEBUG(Service_NWM, "[hub] server {}: no list", servers[i]);
                 }
@@ -494,6 +506,10 @@ private:
                         all.push_back(h);
                     }
                 }
+            }
+            if (summary != last_list_summary) { // (only when it changes: the list is asked every few seconds)
+                last_list_summary = summary;
+                LOG_INFO(Service_NWM, "[hub] list: {}", summary);
             }
             Post([this, all] { OnList(all); });
         });

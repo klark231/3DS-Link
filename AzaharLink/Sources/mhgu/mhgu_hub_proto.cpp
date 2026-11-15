@@ -12,6 +12,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdarg>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 
@@ -338,7 +339,10 @@ std::optional<Endpoint> Resolve(const std::string& host_port, u16 default_port) 
     return e;
 }
 
+thread_local int g_tcp_fail = 0; // why the last TcpConnect of this thread failed: -1 timeout, -2 unknown, else errno / SO_ERROR
+
 Sock TcpConnect(const Endpoint& to, int timeout_ms) {
+    g_tcp_fail = 0;
     NetInit();
     const Sock s = Wrap(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
     if (s == BadSock) {
@@ -355,8 +359,11 @@ Sock TcpConnect(const Endpoint& to, int timeout_ms) {
     timeval tv{timeout_ms / 1000, (timeout_ms % 1000) * 1000};
     int err = 1;
     socklen_t el = sizeof err;
-    if (select(static_cast<int>(Raw(s)) + 1, nullptr, &w, &e, &tv) <= 0 || !FD_ISSET(Raw(s), &w) ||
-        getsockopt(Raw(s), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &el) || err) {
+    const int sel = select(static_cast<int>(Raw(s)) + 1, nullptr, &w, &e, &tv);
+    const bool writable = sel > 0 && FD_ISSET(Raw(s), &w);
+    const bool got_err = writable && getsockopt(Raw(s), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &el) == 0;
+    if (!writable || !got_err || err) {
+        g_tcp_fail = sel == 0 ? -1 : (sel < 0 ? errno : (err ? err : -2));
         CloseSock(s);
         return BadSock;
     }
@@ -590,14 +597,36 @@ const char* LobbyErrorText(u32 code) {
     }
 }
 
+thread_local std::string g_list_why; // the last reasons a list request of this thread failed (see TakeListWhy)
+
+static void ListWhy(const std::string& what) {
+    if (g_list_why.find(what) == std::string::npos) {
+        g_list_why += (g_list_why.empty() ? "" : "; ") + what;
+    }
+}
+
+std::string TakeListWhy() {
+    std::string r;
+    r.swap(g_list_why);
+    return r;
+}
+
 ServerState ListHubs(const std::string& server, const std::string& key, u16 link_version, int connect_ms,
                      std::vector<ListedHub>& out) {
     const auto ep = Resolve(server, LobbyPort);
     if (!ep) {
+        ListWhy("DNS lookup failed");
         return ServerState::NotFound;
     }
     const Sock s = TcpConnect(*ep, connect_ms);
     if (s == BadSock) {
+        char b[96];
+        if (g_tcp_fail == -1) {
+            std::snprintf(b, sizeof b, "TCP connect to port %u timed out after %d ms", static_cast<unsigned>(LobbyPort), connect_ms);
+        } else {
+            std::snprintf(b, sizeof b, "TCP connect to port %u failed (code %d)", static_cast<unsigned>(LobbyPort), g_tcp_fail);
+        }
+        ListWhy(b);
         return ServerState::Unreachable;
     }
     const auto header = LobbyHeader(key, link_version);
@@ -607,9 +636,11 @@ ServerState ListHubs(const std::string& server, const std::string& key, u16 link
     const int n = FrameSend(s, S_LIST, header) ? FrameRecv(s, type, buf) : -1;
     CloseSock(s);
     if (n >= 4 && type == S_ERROR) {
+        ListWhy(std::string("refused (v") + std::to_string(link_version) + ")");
         return ServerState::Refused;
     }
     if (n < 4 || type != S_HUBS) {
+        ListWhy("connected but no answer to the list request");
         return ServerState::NoAnswer;
     }
     const u32 count = Rd32(buf.data());
