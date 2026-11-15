@@ -5,6 +5,7 @@
 #include "core/hle/service/nwm/mhgu_hub_proto.h"
 #include <map>
 #include <mutex>
+#include "azl/platform.hpp"
 #include "azl/safe_thread.hpp"
 #include "azl/bridge_sleep.hpp"
 
@@ -358,12 +359,14 @@ Sock TcpConnect(const Endpoint& to, int timeout_ms) {
     // error otherwise.
     {
         const auto in_progress = [](int c) { return c == EINPROGRESS || c == EALREADY || c == EWOULDBLOCK || c == EAGAIN; };
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        // (the plugin's own tick clock, not std::chrono: a 3DS log showed steady_clock run ahead of real time here)
+        const std::uint64_t deadline = azl::platform::NowMs() + static_cast<std::uint64_t>(timeout_ms);
         int rc = connect(Raw(s), reinterpret_cast<const sockaddr*>(&a), sizeof a);
         int c = rc == 0 ? 0 : errno;
         bool done = rc == 0 || c == EISCONN;
         while (!done && in_progress(c)) {
-            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+            const std::uint64_t now_ms = azl::platform::NowMs();
+            const long left = now_ms >= deadline ? 0 : static_cast<long>(deadline - now_ms);
             if (left <= 0) {
                 c = -1; // timed out
                 break;
@@ -371,7 +374,7 @@ Sock TcpConnect(const Endpoint& to, int timeout_ms) {
             fd_set w;
             FD_ZERO(&w);
             FD_SET(Raw(s), &w);
-            const long slice = left < 100 ? static_cast<long>(left) : 100;
+            const long slice = left < 100 ? left : 100;
             timeval tv{0, slice * 1000};
             select(static_cast<int>(Raw(s)) + 1, nullptr, &w, nullptr, &tv);
             std::this_thread::sleep_for(std::chrono::milliseconds(20)); // (select may come back at once)
@@ -655,14 +658,19 @@ ServerState ListHubs(const std::string& server, const std::string& key, u16 link
         ListWhy("DNS lookup failed");
         return ServerState::NotFound;
     }
+    const std::uint64_t t_connect = azl::platform::NowMs();
     const Sock s = TcpConnect(*ep, connect_ms);
     if (s == BadSock) {
-        char b[96];
+        char b[128];
+        const auto* ip = reinterpret_cast<const unsigned char*>(&ep->addr);
+        const unsigned took = static_cast<unsigned>(azl::platform::NowMs() - t_connect);
         if (g_tcp_fail == -1) {
-            std::snprintf(b, sizeof b, "TCP connect to port %u timed out after %d ms", static_cast<unsigned>(LobbyPort), connect_ms);
+            std::snprintf(b, sizeof b, "TCP connect to %u.%u.%u.%u port %u timed out (waited %u ms of %d)", ip[0], ip[1], ip[2], ip[3],
+                          static_cast<unsigned>(LobbyPort), took, connect_ms);
         } else {
-            std::snprintf(b, sizeof b, "TCP connect to port %u failed (%s, code %d)", static_cast<unsigned>(LobbyPort),
-                          g_tcp_fail > 0 ? std::strerror(g_tcp_fail) : "unknown", g_tcp_fail);
+            std::snprintf(b, sizeof b, "TCP connect to %u.%u.%u.%u port %u failed after %u ms (%s, code %d)", ip[0], ip[1], ip[2],
+                          ip[3], static_cast<unsigned>(LobbyPort), took, g_tcp_fail > 0 ? std::strerror(g_tcp_fail) : "unknown",
+                          g_tcp_fail);
         }
         ListWhy(b);
         return ServerState::Unreachable;
