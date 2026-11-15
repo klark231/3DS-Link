@@ -227,7 +227,7 @@ public:
     }
 
 private:
-    void Run(std::string server, u16 link_version);
+    void Run(std::string server, u16 link_version, bool phone);
     std::atomic<bool> running{false};
     std::atomic<u32> changes{0};
     std::string key;

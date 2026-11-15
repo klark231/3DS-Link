@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdarg>
 #include <cerrno>
+#include <thread>
 #include <cstdio>
 #include <cstring>
 
@@ -350,6 +351,41 @@ Sock TcpConnect(const Endpoint& to, int timeout_ms) {
     }
     SetNonblock(s, true);
     const sockaddr_in a = ToSockaddr(to);
+#ifdef MHGU_SOFT_RCVTIMEO
+    // libctru (3DS): select() can report a connecting socket writable at once, and SO_ERROR then holds the "still in
+    // progress" code instead of the end of the connect (a 3DS log showed code -26 on every try). So: after each wait ask
+    // connect() again - it answers 0 / EISCONN once connected, EINPROGRESS / EALREADY while it goes on, and the real
+    // error otherwise.
+    {
+        const auto in_progress = [](int c) { return c == EINPROGRESS || c == EALREADY || c == EWOULDBLOCK || c == EAGAIN; };
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        int rc = connect(Raw(s), reinterpret_cast<const sockaddr*>(&a), sizeof a);
+        int c = rc == 0 ? 0 : errno;
+        bool done = rc == 0 || c == EISCONN;
+        while (!done && in_progress(c)) {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+            if (left <= 0) {
+                c = -1; // timed out
+                break;
+            }
+            fd_set w;
+            FD_ZERO(&w);
+            FD_SET(Raw(s), &w);
+            const long slice = left < 100 ? static_cast<long>(left) : 100;
+            timeval tv{0, slice * 1000};
+            select(static_cast<int>(Raw(s)) + 1, nullptr, &w, nullptr, &tv);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20)); // (select may come back at once)
+            rc = connect(Raw(s), reinterpret_cast<const sockaddr*>(&a), sizeof a);
+            c = rc == 0 ? 0 : errno;
+            done = rc == 0 || c == EISCONN;
+        }
+        if (!done) {
+            g_tcp_fail = c ? c : -2;
+            CloseSock(s);
+            return BadSock;
+        }
+    }
+#else
     connect(Raw(s), reinterpret_cast<const sockaddr*>(&a), sizeof a);
     fd_set w, e;
     FD_ZERO(&w);
@@ -367,6 +403,7 @@ Sock TcpConnect(const Endpoint& to, int timeout_ms) {
         CloseSock(s);
         return BadSock;
     }
+#endif
     SetNonblock(s, false);
     int one = 1;
     setsockopt(Raw(s), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
@@ -624,7 +661,8 @@ ServerState ListHubs(const std::string& server, const std::string& key, u16 link
         if (g_tcp_fail == -1) {
             std::snprintf(b, sizeof b, "TCP connect to port %u timed out after %d ms", static_cast<unsigned>(LobbyPort), connect_ms);
         } else {
-            std::snprintf(b, sizeof b, "TCP connect to port %u failed (code %d)", static_cast<unsigned>(LobbyPort), g_tcp_fail);
+            std::snprintf(b, sizeof b, "TCP connect to port %u failed (%s, code %d)", static_cast<unsigned>(LobbyPort),
+                          g_tcp_fail > 0 ? std::strerror(g_tcp_fail) : "unknown", g_tcp_fail);
         }
         ListWhy(b);
         return ServerState::Unreachable;
@@ -669,6 +707,9 @@ ServerState ListHubsAll(const std::string& server, const std::string& key, int c
     bool any = false;
     for (const auto& k : keys) {
         for (const u16 v : LinkVersions) {
+            if (k == PhonePublicKey && v < 3) {
+                continue; // (nobody lists in the phones' room under v2: one connect less a round)
+            }
             const ServerState st = ListHubs(server, k, v, connect_ms, out);
             if (st == ServerState::NotFound || st == ServerState::Unreachable) {
                 return any ? best : st; // no point asking again
@@ -740,9 +781,14 @@ void HubListing::Start(const std::vector<std::string>& servers, const std::strin
     running = true;
     // The hub is listed under every link version we speak, so MHGURecomp players on either build find it (a hub
     // server lists a hub only for askers of its own version). Our join code accepts both versions' hellos.
+    // Without a key of its own it is also listed in the phones' public room under v3, where the MHGURecomp Android build
+    // looks (as gu-native does): Android players see a hub hosted from the 3DS.
+    const bool no_key = key.find_first_not_of(' ') == std::string::npos;
     for (const auto& s : servers) {
-        for (const u16 v : LinkVersions) {
-            threads.emplace_back([this, s, v] { Run(s, v); });
+        for (std::size_t i = 0; i < LinkVersions.size() + (no_key ? 1 : 0); i++) {
+            const bool phone = i == LinkVersions.size();
+            const u16 v = phone ? u16{3} : LinkVersions[i];
+            threads.emplace_back([this, s, v, phone] { Run(s, v, phone); });
         }
     }
 }
@@ -769,7 +815,8 @@ void HubListing::MarkChanged() {
     changes++;
 }
 
-void HubListing::Run(std::string server, u16 link_version) {
+void HubListing::Run(std::string server, u16 link_version, bool phone) {
+    const char* const where = phone ? " in the phones' room" : "";
     using Clock = std::chrono::steady_clock;
     auto wait = [this](int ms) {
         for (int t = 0; t < ms && running; t += 100) {
@@ -781,8 +828,8 @@ void HubListing::Run(std::string server, u16 link_version) {
         const auto ep = Resolve(server, LobbyPort);
         const Sock s = ep ? TcpConnect(*ep, 3000) : BadSock;
         if (s == BadSock) {
-            Log("[hub] server %s %s: the room is not listed there (v%u, trying again in 30 s)", server.c_str(),
-                ep ? "unreachable" : "not found", static_cast<unsigned>(link_version));
+            Log("[hub] server %s %s: the room is not listed there (v%u%s, trying again in 30 s)", server.c_str(),
+                ep ? "unreachable" : "not found", static_cast<unsigned>(link_version), where);
             if (!wait(30000)) {
                 break;
             }
@@ -797,7 +844,7 @@ void HubListing::Run(std::string server, u16 link_version) {
             socks.erase(std::remove(socks.begin(), socks.end(), s), socks.end());
             CloseSock(s);
         };
-        const auto header = LobbyHeader(key, link_version);
+        const auto header = LobbyHeader(phone ? std::string(PhonePublicKey) : key, link_version);
         u32 seen = changes.load();
         NetInfo info = info_fn();
         std::vector<u8> req(header.begin(), header.end());
@@ -808,15 +855,15 @@ void HubListing::Run(std::string server, u16 link_version) {
         int n = FrameSend(s, S_HOST, req) ? FrameRecv(s, type, buf) : -1;
         if (n < 8 || type != S_HOSTED) {
             const bool error = n >= 4 && type == S_ERROR;
-            Log("[hub] server %s: can't list the room as v%u (%s); trying again in 30 s", server.c_str(),
-                static_cast<unsigned>(link_version), error ? LobbyErrorText(Rd32(buf.data())) : "no answer");
+            Log("[hub] server %s: can't list the room as v%u%s (%s); trying again in 30 s", server.c_str(),
+                static_cast<unsigned>(link_version), where, error ? LobbyErrorText(Rd32(buf.data())) : "no answer");
             forget();
             if (!wait(30000)) {
                 break;
             }
             continue;
         }
-        Log("[hub] room listed on %s (link v%u)", server.c_str(), static_cast<unsigned>(link_version));
+        Log("[hub] room listed on %s (link v%u%s)", server.c_str(), static_cast<unsigned>(link_version), where);
         SetRecvTimeout(s, 0);
         auto last_rx = Clock::now(), next_ping = last_rx + std::chrono::seconds(15);
         while (running) {
@@ -851,7 +898,7 @@ void HubListing::Run(std::string server, u16 link_version) {
             if (type == S_INCOMING && n >= 8) {
                 const u64 ticket = Rd64(buf.data());
                 const Endpoint server_ep = *ep;
-                const std::string k = key;
+                const std::string k = phone ? std::string(PhonePublicKey) : key; // (a player of the phones' room attaches with its key)
                 PlayerFn fn = player_fn;
                 azl::SafeThread([server_ep, k, link_version, ticket, fn] {
                     Spliced sp;
